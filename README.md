@@ -38,8 +38,8 @@
 
 本项目为**单 APK 双端合一**设计，手机直接安装一个安装包即可：
 
-- 编译生成或下载 `app-debug.apk`（或 `AirCursor-v1.0-release.apk`）；
-- 在**手机****上安装该应用。
+- 编译生成或下载 `app-debug.apk`（或 `AirCursor-v1.1-release.apk` / `AirCursor-v1.1-latest.apk`）；
+- 在**手机**上安装该应用。
 
 ### 第二步：系统蓝牙配对
 
