@@ -108,7 +108,7 @@ class MainActivity : AppCompatActivity() {
             showTabletGuideDialog()
         }
 
-        // Touchpad movements and tap
+        // Touchpad movements, tap and two-finger scroll
         binding.touchpadView.callback = object : cn.moonify.aircursor.ui.TouchpadView.Callback {
             override fun onMove(dx: Int, dy: Int) {
                 hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0)
@@ -121,6 +121,10 @@ class MainActivity : AppCompatActivity() {
                 mainHandler.postDelayed({
                     hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
                 }, 20)
+            }
+
+            override fun onWheel(wheel: Int) {
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel)
             }
         }
 
