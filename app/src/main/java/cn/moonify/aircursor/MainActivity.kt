@@ -195,7 +195,7 @@ class MainActivity : AppCompatActivity() {
         binding.sbTouchpadSens.progress = (savedTouchpadSens * 10).toInt().coerceIn(5, 30)
         binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", savedTouchpadSens)
 
-        val savedWheelSens = prefs.getFloat(KEY_WHEEL_SENS, 0.5f)
+        val savedWheelSens = prefs.getFloat(KEY_WHEEL_SENS, 0.2f)
         binding.wheelBarView.sensitivity = savedWheelSens
         binding.touchpadView.scrollSensitivity = savedWheelSens
         binding.sbWheelSens.progress = (savedWheelSens * 10).toInt().coerceIn(1, 20)

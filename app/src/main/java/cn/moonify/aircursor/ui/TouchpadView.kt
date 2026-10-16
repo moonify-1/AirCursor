@@ -24,7 +24,7 @@ class TouchpadView @JvmOverloads constructor(
 
     var callback: Callback? = null
     var sensitivity: Float = 1.2f
-    var scrollSensitivity: Float = 0.5f
+    var scrollSensitivity: Float = 0.2f
 
     private var lastX = 0f
     private var lastY = 0f
@@ -91,9 +91,11 @@ class TouchpadView @JvmOverloads constructor(
                     val dy = currentFocusY - lastScrollY
                     lastScrollY = currentFocusY
 
-                    // Moving fingers UP scrolls UP (positive wheel in HID mouse)
-                    // Moving fingers DOWN scrolls DOWN (negative wheel in HID mouse)
-                    scrollAccumulator += (-dy * scrollSensitivity)
+                    // Two-finger scroll: natural direction
+                    // Moving fingers UP (dy < 0) scrolls page DOWN (negative wheel in HID mouse)
+                    // Moving fingers DOWN (dy > 0) scrolls page UP (positive wheel in HID mouse)
+                    val scrollStep = (10f * resources.displayMetrics.density).coerceAtLeast(1f)
+                    scrollAccumulator += (dy / scrollStep) * scrollSensitivity
                     val wheel = scrollAccumulator.toInt()
                     if (wheel != 0) {
                         scrollAccumulator -= wheel

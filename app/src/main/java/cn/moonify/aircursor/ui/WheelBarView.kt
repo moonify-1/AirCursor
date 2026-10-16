@@ -23,9 +23,10 @@ class WheelBarView @JvmOverloads constructor(
     }
 
     var callback: Callback? = null
-    var sensitivity: Float = 0.5f
+    var sensitivity: Float = 0.2f
 
     private var lastY = 0f
+    private var wheelAccumulator = 0f
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     init {
@@ -58,6 +59,7 @@ class WheelBarView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lastY = event.y
+                wheelAccumulator = 0f
                 parent.requestDisallowInterceptTouchEvent(true)
                 return true
             }
@@ -68,14 +70,19 @@ class WheelBarView @JvmOverloads constructor(
 
                 // Moving finger UP scrolls UP (positive wheel in HID mouse)
                 // Moving finger DOWN scrolls DOWN (negative wheel in HID mouse)
-                val wheel = (-dy * sensitivity).toInt().coerceIn(-127, 127)
+                val scrollStep = (10f * resources.displayMetrics.density).coerceAtLeast(1f)
+                wheelAccumulator += (-dy / scrollStep) * sensitivity
+                val wheel = wheelAccumulator.toInt()
                 if (wheel != 0) {
-                    callback?.onWheel(wheel)
+                    wheelAccumulator -= wheel
+                    val clampedWheel = wheel.coerceIn(-127, 127)
+                    callback?.onWheel(clampedWheel)
                 }
                 return true
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                wheelAccumulator = 0f
                 parent.requestDisallowInterceptTouchEvent(false)
                 return true
             }
