@@ -206,8 +206,12 @@ class HidMouseManager(private val context: Context) {
         }
     }
 
-    // 默认使用纯标准 Boot 鼠标模式（最稳定、无延迟、防止平板因描述符缓存错位导致乱窜）
-    var isComboMode: Boolean = false
+    // 默认从本地持久化配置读取，未配置时使用纯标准 Boot 鼠标模式（最稳定、无延迟）
+    var isComboMode: Boolean = try {
+        context.getSharedPreferences("aircursor_prefs", Context.MODE_PRIVATE).getBoolean("combo_mode", false)
+    } catch (_: Exception) {
+        false
+    }
 
     @Volatile
     var currentProtocol: Byte = BluetoothHidDevice.PROTOCOL_REPORT_MODE
@@ -392,6 +396,10 @@ class HidMouseManager(private val context: Context) {
     fun switchMode(comboMode: Boolean) {
         if (isComboMode == comboMode) return
         isComboMode = comboMode
+        try {
+            context.getSharedPreferences("aircursor_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("combo_mode", comboMode).apply()
+        } catch (_: Exception) {}
         currentProtocol = BluetoothHidDevice.PROTOCOL_REPORT_MODE
         if (isAppRegistered) {
             try {
