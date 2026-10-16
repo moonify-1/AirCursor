@@ -461,12 +461,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onThreeFingerTap() {
                 if (isInputModeActive) dismissInput()
-                // 三指轻触：发送鼠标中键单击
-                val downState = currentButtonState or HidMouseManager.BUTTON_MIDDLE
-                hidMouseManager.sendMouseReport(downState, 0, 0, 0, 0)
-                mainHandler.postDelayed({
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
-                }, 20)
+                handleThreeFingerAction("三指轻点")
             }
         }
 
@@ -1031,14 +1026,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun showEnableComboModeDialog(gestureName: String) {
         AlertDialog.Builder(this)
-            .setTitle("需开启键盘复合模式")
+            .setTitle("需开启外接键盘模式")
             .setMessage(
                 "检测到已触发【$gestureName】，切换平板软件界面需要发送实体键盘快捷指令（Alt + Tab）。\n\n" +
                 "当前处于【纯鼠标模式】（仅发送鼠标报文，不包含键盘通道）。\n\n" +
-                "是否立即切换为【高精度智能触控板】(包含键盘与系统按键)？"
+                "是否立即切换为【外接键盘+鼠标复合模式】？\n\n" +
+                "💡 提示：开启复合模式后，如平板鼠标坐标出现漂移，进入平板蓝牙设置将手机【取消配对】再重新连接一次即可恢复正常。"
             )
             .setPositiveButton("立即开启") { _, _ ->
-                binding.rbModeTouchpad.isChecked = true
+                binding.rbModeCombo.isChecked = true
             }
             .setNegativeButton("取消", null)
             .show()
