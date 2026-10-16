@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_TOUCHPAD_SENS = "touchpad_sens"
         private const val KEY_WHEEL_SENS = "wheel_sens"
+        private const val KEY_TOUCHPAD_SCROLL_DIRECTION = "touchpad_scroll_direction"
         private const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
         private const val KEY_COMBO_MODE = "combo_mode"
         private const val KEY_HID_MODE = "hid_mode"
@@ -232,7 +233,16 @@ class MainActivity : AppCompatActivity() {
         binding.sbWheelSens.progress = (savedWheelSens * 10).toInt().coerceIn(1, 20)
         binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", savedWheelSens)
 
-        // Wheel direction setup (default: true for two-finger swipe direction)
+        // Touchpad two-finger scroll direction setup (default: true for natural swipe direction)
+        val savedTouchpadNatural = prefs.getBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, true)
+        binding.touchpadView.isNaturalScroll = savedTouchpadNatural
+        if (savedTouchpadNatural) {
+            binding.rbTouchpadScrollNatural.isChecked = true
+        } else {
+            binding.rbTouchpadScrollInverted.isChecked = true
+        }
+
+        // Wheel bar direction setup (default: true for natural swipe direction)
         val savedWheelNatural = prefs.getBoolean(KEY_WHEEL_DIRECTION, true)
         binding.wheelBarView.isNaturalDirection = savedWheelNatural
         if (savedWheelNatural) {
@@ -394,7 +404,7 @@ class MainActivity : AppCompatActivity() {
             showTabletGuideDialog()
         }
 
-        binding.touchpadView.isNaturalScroll = prefs.getBoolean(KEY_WHEEL_DIRECTION, true)
+        binding.touchpadView.isNaturalScroll = prefs.getBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, true)
         
         // Left / Right Mouse Buttons Visibility setting
         val showButtons = prefs.getBoolean(KEY_SHOW_MOUSE_BUTTONS, true)
@@ -555,11 +565,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Wheel Direction (Natural vs Inverted)
+        // Touchpad Two-Finger Scroll Direction (Natural vs Inverted)
+        binding.rgTouchpadScrollDirection.setOnCheckedChangeListener { _, checkedId ->
+            val natural = (checkedId == R.id.rbTouchpadScrollNatural)
+            binding.touchpadView.isNaturalScroll = natural
+            prefs.edit().putBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, natural).apply()
+        }
+
+        // Wheel Bar Direction (Natural vs Inverted)
         binding.rgWheelDirection.setOnCheckedChangeListener { _, checkedId ->
             val natural = (checkedId == R.id.rbWheelNatural)
             binding.wheelBarView.isNaturalDirection = natural
-            binding.touchpadView.isNaturalScroll = natural
             prefs.edit().putBoolean(KEY_WHEEL_DIRECTION, natural).apply()
         }
 

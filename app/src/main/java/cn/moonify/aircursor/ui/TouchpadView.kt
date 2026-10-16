@@ -123,7 +123,7 @@ class TouchpadView @JvmOverloads constructor(
             val rawWheelStep = kineticVelocityY * scrollSensitivity * 0.45f
             val rawPanStep = kineticVelocityX * scrollSensitivity * 0.45f
 
-            val stepY = if (isNaturalScroll) -rawWheelStep else rawWheelStep
+            val stepY = if (isNaturalScroll) rawWheelStep else -rawWheelStep
             val stepX = if (isNaturalScroll) -rawPanStep else rawPanStep
 
             scrollAccumulatorY += stepY
@@ -432,7 +432,8 @@ class TouchpadView @JvmOverloads constructor(
                     val rawPanStep = dx * scrollSensitivity * 0.45f
 
                     // 自然滑动方向：手指向上推 (dy < 0) 页面向下滚 (negative wheel)
-                    val stepY = if (isNaturalScroll) -rawWheelStep else rawWheelStep
+                    // 传统滚轮方向：手指向上推 (dy < 0) 页面向上滚 (positive wheel)
+                    val stepY = if (isNaturalScroll) rawWheelStep else -rawWheelStep
                     val stepX = if (isNaturalScroll) -rawPanStep else rawPanStep
 
                     scrollAccumulatorY += stepY
