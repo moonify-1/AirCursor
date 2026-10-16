@@ -468,11 +468,11 @@ class MainActivity : AppCompatActivity() {
         val device = pairedDevices[selectedIndex]
         Toast.makeText(this, "正在连接平板: ${device.name ?: device.address}...", Toast.LENGTH_SHORT).show()
 
-        // 1. Connect HID Mouse
+        // 1. Connect HID Mouse & Keyboard
         hidMouseManager.connect(device)
 
-        // 2. Connect RFCOMM SPP Channel
-        rfcommClientManager.connect(device)
+        // 2. Connect RFCOMM SPP Channel (静默连接，避免在 vivo 模式下弹出无谓的失败提示)
+        rfcommClientManager.connect(device, silentIfFailed = hidMouseManager.isComboMode)
 
         updateStatusText()
     }
@@ -495,9 +495,9 @@ class MainActivity : AppCompatActivity() {
 
         val rfState = rfcommClientManager.connectionState
         val rfStateStr = when (rfState) {
-            RfcommClientManager.STATE_CONNECTED -> "中文通道: 已连接"
-            RfcommClientManager.STATE_CONNECTING -> "中文通道: 连接中…"
-            else -> "中文通道: 未连接"
+            RfcommClientManager.STATE_CONNECTED -> "串口通道: 已连接"
+            RfcommClientManager.STATE_CONNECTING -> "串口通道: 连接中…"
+            else -> if (hidMouseManager.isComboMode) "串口: 未开启(走HID直连)" else "串口通道: 未连接"
         }
 
         val fullStatus = "$hidStateStr  |  $rfStateStr"
@@ -563,7 +563,12 @@ class MainActivity : AppCompatActivity() {
                 updateBadge(binding.tvBadgeRfcomm, "○ 串口连接中", R.color.accent_amber, R.color.accent_amber_bg)
             }
             else -> {
-                updateBadge(binding.tvBadgeRfcomm, "○ 串口未连接", R.color.badge_gray_text, R.color.badge_gray_bg)
+                val text = if (hidMouseManager.isComboMode && hidState == BluetoothProfile.STATE_CONNECTED) {
+                    "○ 串口免用(走HID)"
+                } else {
+                    "○ 串口未连接"
+                }
+                updateBadge(binding.tvBadgeRfcomm, text, R.color.badge_gray_text, R.color.badge_gray_bg)
             }
         }
 

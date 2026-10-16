@@ -12,6 +12,11 @@ import java.util.concurrent.Executors
 /**
  * Manages the client-side RFCOMM SPP Bluetooth socket connection to the tablet.
  * Sends UTF-8 Chinese strings and special control commands using DataOutputStream.writeUTF().
+ *
+ * 具备三级重试机制与降级容错：
+ * 1. 尝试 Secure RFCOMM Socket
+ * 2. 失败后降级尝试 Insecure RFCOMM Socket
+ * 3. 失败后降级尝试底层反射通道 (Port 1)
  */
 class RfcommClientManager {
 
@@ -49,7 +54,7 @@ class RfcommClientManager {
         private set
 
     @SuppressLint("MissingPermission")
-    fun connect(device: BluetoothDevice) {
+    fun connect(device: BluetoothDevice, silentIfFailed: Boolean = false) {
         if (connectionState == STATE_CONNECTING || connectionState == STATE_CONNECTED) {
             if (connectedDevice?.address == device.address && socket?.isConnected == true) {
                 Log.d(TAG, "Already connected to ${device.address}")
@@ -61,22 +66,60 @@ class RfcommClientManager {
         updateState(STATE_CONNECTING, device)
 
         connectExecutor.execute {
+            var connectedSocket: BluetoothSocket? = null
+            var lastException: Exception? = null
+
+            bluetoothAdapter?.cancelDiscovery()
+
+            // 1. 尝试标准 Secure RFCOMM
             try {
-                bluetoothAdapter?.cancelDiscovery()
-                Log.d(TAG, "Creating RFCOMM socket to ${device.address}")
+                Log.d(TAG, "Trying Secure RFCOMM to ${device.address}")
                 val s = device.createRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
                 s.connect()
+                connectedSocket = s
+            } catch (e1: Exception) {
+                lastException = e1
+                Log.w(TAG, "Secure RFCOMM failed: ${e1.message}, trying Insecure RFCOMM...")
+            }
 
-                socket = s
-                dataOutputStream = DataOutputStream(s.outputStream)
+            // 2. 尝试 Insecure RFCOMM
+            if (connectedSocket == null) {
+                try {
+                    val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
+                    s.connect()
+                    connectedSocket = s
+                } catch (e2: Exception) {
+                    lastException = e2
+                    Log.w(TAG, "Insecure RFCOMM failed: ${e2.message}, trying reflection fallback...")
+                }
+            }
+
+            // 3. 尝试底层反射创建 RFCOMM Channel 1
+            if (connectedSocket == null) {
+                try {
+                    val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    val s = method.invoke(device, 1) as BluetoothSocket
+                    s.connect()
+                    connectedSocket = s
+                } catch (e3: Exception) {
+                    lastException = e3
+                    Log.w(TAG, "Reflection RFCOMM failed: ${e3.message}")
+                }
+            }
+
+            if (connectedSocket != null && connectedSocket.isConnected) {
+                socket = connectedSocket
+                dataOutputStream = DataOutputStream(connectedSocket.outputStream)
                 connectedDevice = device
                 updateState(STATE_CONNECTED, device)
                 Log.d(TAG, "RFCOMM connected successfully to ${device.address}")
-            } catch (e: Exception) {
-                Log.e(TAG, "RFCOMM connection failed to ${device.address}", e)
+            } else {
+                Log.e(TAG, "All RFCOMM connection attempts failed to ${device.address}", lastException)
                 closeInternal()
                 updateState(STATE_DISCONNECTED, null)
-                listener?.onError("RFCOMM 连接失败: ${e.message}")
+                if (!silentIfFailed) {
+                    listener?.onError("串口连接未就绪 (平板端未开启 AirCursor 服务)")
+                }
             }
         }
     }

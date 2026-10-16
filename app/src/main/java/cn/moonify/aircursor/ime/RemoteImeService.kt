@@ -115,10 +115,18 @@ class RemoteImeService : InputMethodService() {
                 var ss: BluetoothServerSocket? = null
                 try {
                     Log.d(TAG, "Listening for RFCOMM SPP with UUID: ${RfcommConstants.SPP_UUID}")
-                    ss = bluetoothAdapter.listenUsingRfcommWithServiceRecord(
-                        RfcommConstants.SERVICE_NAME,
-                        RfcommConstants.SPP_UUID
-                    )
+                    ss = try {
+                        bluetoothAdapter.listenUsingRfcommWithServiceRecord(
+                            RfcommConstants.SERVICE_NAME,
+                            RfcommConstants.SPP_UUID
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "listenUsingRfcomm failed, trying insecure...", e)
+                        bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
+                            RfcommConstants.SERVICE_NAME,
+                            RfcommConstants.SPP_UUID
+                        )
+                    }
                     serverSocket = ss
 
                     // Accept loop: accepts connections and reconnects if dropped
