@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothSocket
 import android.util.Log
 import java.io.DataOutputStream
 import java.io.IOException
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 
 /**
@@ -33,7 +34,25 @@ class RfcommClientManager {
         fun onError(message: String)
     }
 
-    var listener: Listener? = null
+    private val listeners = CopyOnWriteArrayList<Listener>()
+
+    fun addListener(l: Listener) {
+        if (!listeners.contains(l)) {
+            listeners.add(l)
+        }
+    }
+
+    fun removeListener(l: Listener) {
+        listeners.remove(l)
+    }
+
+    var listener: Listener?
+        get() = listeners.firstOrNull()
+        set(value) {
+            if (value != null && !listeners.contains(value)) {
+                listeners.add(value)
+            }
+        }
 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val sendExecutor = Executors.newSingleThreadExecutor()
@@ -143,7 +162,7 @@ class RfcommClientManager {
                 closeInternal()
                 updateState(STATE_DISCONNECTED, null)
                 if (!silentIfFailed) {
-                    listener?.onError("串口连接未就绪 (平板端未开启 AirCursor 服务)")
+                    notifyError("串口连接未就绪 (平板端未开启 AirCursor 服务)")
                 }
             }
         }
@@ -164,7 +183,7 @@ class RfcommClientManager {
             } catch (e: IOException) {
                 Log.e(TAG, "Failed to send text, socket might be disconnected", e)
                 disconnect()
-                listener?.onError("发送失败，连接已断开: ${e.message}")
+                notifyError("发送失败，连接已断开: ${e.message}")
             }
         }
     }
@@ -195,7 +214,23 @@ class RfcommClientManager {
 
     private fun updateState(newState: Int, device: BluetoothDevice?) {
         connectionState = newState
-        listener?.onConnectionStateChanged(newState, device)
+        for (l in listeners) {
+            try {
+                l.onConnectionStateChanged(newState, device)
+            } catch (e: Exception) {
+                Log.e(TAG, "Listener onConnectionStateChanged error", e)
+            }
+        }
+    }
+
+    private fun notifyError(message: String) {
+        for (l in listeners) {
+            try {
+                l.onError(message)
+            } catch (e: Exception) {
+                Log.e(TAG, "Listener onError error", e)
+            }
+        }
     }
 
     fun release() {

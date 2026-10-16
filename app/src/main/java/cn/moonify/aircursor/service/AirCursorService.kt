@@ -12,8 +12,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import cn.moonify.aircursor.MainActivity
 import cn.moonify.aircursor.R
@@ -59,18 +61,22 @@ class AirCursorService : Service() {
     }
 
     private val connectionManager = AirCursorConnectionManager.instance
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val connectionListener = object : AirCursorConnectionManager.Listener {
         override fun onStateChanged() {
             updateNotification()
+            checkWakeLock()
         }
 
         override fun onReconnectProgress(attempt: Int, maxAttempts: Int, message: String) {
             updateNotification()
+            checkWakeLock()
         }
 
         override fun onReconnectFailed(device: BluetoothDevice?) {
             updateNotification()
+            checkWakeLock()
         }
 
         override fun onError(message: String) {
@@ -92,12 +98,14 @@ class AirCursorService : Service() {
         if (intent?.action == ACTION_DISCONNECT) {
             Log.d(TAG, "Notification Disconnect action triggered")
             connectionManager.disconnectAll(manual = true)
+            releaseWakeLock()
             stopForegroundCompat()
             stopSelf()
             return START_NOT_STICKY
         }
 
         if (intent?.action == ACTION_STOP) {
+            releaseWakeLock()
             stopForegroundCompat()
             stopSelf()
             return START_NOT_STICKY
@@ -105,6 +113,7 @@ class AirCursorService : Service() {
 
         val notification = buildNotification()
         startForegroundCompat(notification)
+        checkWakeLock()
 
         return START_STICKY
     }
@@ -115,6 +124,40 @@ class AirCursorService : Service() {
         super.onDestroy()
         Log.d(TAG, "AirCursorService onDestroy")
         connectionManager.removeListener(connectionListener)
+        releaseWakeLock()
+    }
+
+    @SuppressLint("WakelockTimeout")
+    private fun checkWakeLock() {
+        if (connectionManager.isConnectedOrConnecting()) {
+            if (wakeLock == null) {
+                val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AirCursor:ServiceWakeLock")?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            try {
+                if (wakeLock?.isHeld == false) {
+                    wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours max
+                    Log.d(TAG, "WakeLock acquired for background connection keepalive")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to acquire WakeLock", e)
+            }
+        } else {
+            releaseWakeLock()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+                Log.d(TAG, "WakeLock released")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to release WakeLock", e)
+        }
     }
 
     private fun createNotificationChannel() {
@@ -187,8 +230,9 @@ class AirCursorService : Service() {
             }
         }
 
+        // 注意：通知小图标使用专用的单色扁平矢量图标 ic_stat_aircursor，严禁使用包含 gradient 渐变的图标，否则会导致 SystemUI 崩溃
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_aircursor)
             .setContentTitle(title)
             .setContentText(content)
             .setContentIntent(openAppPendingIntent)
@@ -220,7 +264,8 @@ class AirCursorService : Service() {
     private fun startForegroundCompat(notification: Notification) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
+                ServiceCompat.startForeground(
+                    this,
                     NOTIFICATION_ID,
                     notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
@@ -235,12 +280,7 @@ class AirCursorService : Service() {
 
     private fun stopForegroundCompat() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-            } else {
-                @Suppress("DEPRECATION")
-                stopForeground(true)
-            }
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stopForeground", e)
         }
