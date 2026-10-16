@@ -204,7 +204,7 @@
                 android:textSize="12sp" />
 
             <Space
-                android:layout_width="6dp"
+                android:layout_width="4dp"
                 android:layout_height="match_parent" />
 
             <Button
@@ -218,7 +218,21 @@
                 android:textSize="12sp" />
 
             <Space
-                android:layout_width="6dp"
+                android:layout_width="4dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/btnQuickRecents"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:padding="0dp"
+                android:text="@string/quick_recents"
+                android:textSize="12sp" />
+
+            <Space
+                android:layout_width="4dp"
                 android:layout_height="match_parent" />
 
             <Button
@@ -232,7 +246,7 @@
                 android:textSize="12sp" />
 
             <Space
-                android:layout_width="6dp"
+                android:layout_width="4dp"
                 android:layout_height="match_parent" />
 
             <Button
@@ -446,7 +460,6 @@
                         android:id="@+id/rbModeTouchpad"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:checked="true"
                         android:text="@string/mode_touchpad"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
@@ -466,6 +479,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
+                        android:checked="true"
                         android:text="@string/mode_combo"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
