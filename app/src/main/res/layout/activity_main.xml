@@ -67,7 +67,7 @@
             android:paddingHorizontal="12dp"
             android:paddingVertical="8dp">
 
-            <!-- Row 1: Device Name and Quick Action Button -->
+            <!-- Row 1: Device Name -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -92,19 +92,9 @@
                     android:textColor="@color/text_primary"
                     android:textSize="13sp"
                     android:textStyle="bold" />
-
-                <Button
-                    android:id="@+id/btnPropAction"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="0dp"
-                    android:text="@string/prop_btn_settings"
-                    android:textSize="11sp" />
             </LinearLayout>
 
-            <!-- Row 2: Connection Badges (HID, Combo Mode) -->
+            <!-- Row 2: Connection Badges & Action Button in the same line -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -112,7 +102,7 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <!-- HID Mouse Badge -->
+                <!-- HID Mouse Badge (连接信息) -->
                 <TextView
                     android:id="@+id/tvBadgeHid"
                     android:layout_width="wrap_content"
@@ -122,9 +112,9 @@
                     android:paddingVertical="3dp"
                     android:text="@string/prop_hid_disconnected"
                     android:textColor="@color/badge_gray_text"
-                    android:textSize="10sp" />
+                    android:textSize="10.5sp" />
 
-                <!-- Combo Mode Badge -->
+                <!-- Combo Mode Badge (模式) -->
                 <TextView
                     android:id="@+id/tvBadgeCombo"
                     android:layout_width="wrap_content"
@@ -135,7 +125,24 @@
                     android:paddingVertical="3dp"
                     android:text="@string/prop_combo_on"
                     android:textColor="@color/badge_gray_text"
-                    android:textSize="10sp" />
+                    android:textSize="10.5sp" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <!-- Disconnect / Settings / Connect Action Button -->
+                <Button
+                    android:id="@+id/btnPropAction"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="0dp"
+                    android:text="@string/prop_btn_settings"
+                    android:textSize="11sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -184,84 +191,9 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Quick Action Navigation Bar (Consumer Control: Home, Back, Volume) -->
-        <LinearLayout
-            android:id="@+id/layoutQuickActions"
-            android:layout_width="match_parent"
-            android:layout_height="38dp"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal"
-            android:gravity="center">
-
-            <Button
-                android:id="@+id/btnQuickBack"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:padding="0dp"
-                android:text="@string/quick_back"
-                android:textSize="12sp" />
-
-            <Space
-                android:layout_width="4dp"
-                android:layout_height="match_parent" />
-
-            <Button
-                android:id="@+id/btnQuickHome"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:padding="0dp"
-                android:text="@string/quick_home"
-                android:textSize="12sp" />
-
-            <Space
-                android:layout_width="4dp"
-                android:layout_height="match_parent" />
-
-            <Button
-                android:id="@+id/btnQuickRecents"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:padding="0dp"
-                android:text="@string/quick_recents"
-                android:textSize="12sp" />
-
-            <Space
-                android:layout_width="4dp"
-                android:layout_height="match_parent" />
-
-            <Button
-                android:id="@+id/btnQuickVolDown"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:padding="0dp"
-                android:text="@string/quick_vol_down"
-                android:textSize="12sp" />
-
-            <Space
-                android:layout_width="4dp"
-                android:layout_height="match_parent" />
-
-            <Button
-                android:id="@+id/btnQuickVolUp"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:padding="0dp"
-                android:text="@string/quick_vol_up"
-                android:textSize="12sp" />
-        </LinearLayout>
-
         <!-- Physical Left / Right Buttons -->
         <LinearLayout
+            android:id="@+id/layoutMouseButtons"
             android:layout_width="match_parent"
             android:layout_height="52dp"
             android:layout_marginTop="8dp"
@@ -315,16 +247,6 @@
                 android:textColorHint="@color/text_secondary"
                 android:textSize="13sp" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/tvGestureHint"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:gravity="center"
-            android:text="@string/gesture_hint_bottom"
-            android:textColor="@color/text_secondary"
-            android:textSize="10.5sp" />
     </LinearLayout>
 
 
@@ -684,6 +606,48 @@
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
                 </RadioGroup>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginVertical="10dp"
+                    android:background="@color/border_color" />
+
+                <!-- Left / Right Mouse Buttons Visibility Setting -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="显示触控板下方左/右按键"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="关闭后隐藏底部按键，触控板将自动扩展至最大全屏高度"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchMouseButtons"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- Section 5: Gestures & Split-Screen Suppression -->

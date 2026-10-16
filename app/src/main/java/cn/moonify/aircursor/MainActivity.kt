@@ -64,6 +64,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_COMBO_MODE = "combo_mode"
         private const val KEY_HID_MODE = "hid_mode"
         private const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
+        private const val KEY_SHOW_MOUSE_BUTTONS = "show_mouse_buttons"
 
         const val THEME_NIGHT = "night"
         const val THEME_LIGHT = "day"
@@ -248,10 +249,9 @@ class MainActivity : AppCompatActivity() {
             binding.rbShortcutAltTab.isChecked = true
         }
 
-        // Initialize Touchpad mode and quick actions visibility based on hidMode
+        // Initialize Touchpad mode
         val isNative = (hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD)
         binding.touchpadView.isNativeTouchpadMode = isNative
-        binding.layoutQuickActions.visibility = if (isNative) View.VISIBLE else View.GONE
 
         // Show version and build time
         binding.tvAboutVersion.text = "AirCursor v${BuildConfig.VERSION_NAME} (构建时间: ${BuildConfig.BUILD_TIME})"
@@ -395,7 +395,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.touchpadView.isNaturalScroll = prefs.getBoolean(KEY_WHEEL_DIRECTION, true)
-        binding.layoutQuickActions.visibility = if (hidMouseManager.hidMode != HidMouseManager.MODE_PURE_MOUSE) View.VISIBLE else View.GONE
+        
+        // Left / Right Mouse Buttons Visibility setting
+        val showButtons = prefs.getBoolean(KEY_SHOW_MOUSE_BUTTONS, true)
+        binding.switchMouseButtons.isChecked = showButtons
+        binding.layoutMouseButtons.visibility = if (showButtons) View.VISIBLE else View.GONE
+        binding.switchMouseButtons.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(KEY_SHOW_MOUSE_BUTTONS, isChecked).apply()
+            binding.layoutMouseButtons.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
 
         // Touchpad movements, tap, scroll, and multi-finger gestures
         binding.touchpadView.callback = object : cn.moonify.aircursor.ui.TouchpadView.Callback {
@@ -465,28 +473,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Quick Navigation Buttons (Home, Back, Recents, Volume)
-        binding.btnQuickBack.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_BACK)
-        }
-        binding.btnQuickHome.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_HOME)
-        }
-        binding.btnQuickRecents.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            handleThreeFingerAction("快捷任务键")
-        }
-        binding.btnQuickVolDown.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_VOLUME_DOWN)
-        }
-        binding.btnQuickVolUp.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_VOLUME_UP)
-        }
-
         // 48dp Scroll wheel
         binding.wheelBarView.callback = object : cn.moonify.aircursor.ui.WheelBarView.Callback {
             override fun onWheel(wheel: Int) {
@@ -553,7 +539,6 @@ class MainActivity : AppCompatActivity() {
             if (hidMouseManager.hidMode != newMode) {
                 hidMouseManager.switchMode(newMode)
                 binding.touchpadView.isNativeTouchpadMode = (newMode == HidMouseManager.MODE_TOUCHPAD)
-                binding.layoutQuickActions.visibility = if (newMode != HidMouseManager.MODE_PURE_MOUSE) View.VISIBLE else View.GONE
                 updateStatusText()
 
                 val modeName = when (newMode) {
@@ -904,14 +889,12 @@ class MainActivity : AppCompatActivity() {
             val name = activeDevice?.let {
                 try { it.name } catch (_: Exception) { null } ?: it.address
             } ?: "平板设备"
-            val attempt = connectionManager.reconnectAttempt
-            val max = AirCursorConnectionManager.MAX_RECONNECT_ATTEMPTS
-            binding.tvPropDevice.text = "正在重连: $name ($attempt/$max)"
+            binding.tvPropDevice.text = "正在重连: $name"
             binding.btnPropAction.text = getString(R.string.prop_btn_disconnect)
             binding.btnPropAction.setOnClickListener { disconnectAll() }
         } else if (activeDevice != null && isAnyConnected) {
             val name = try { activeDevice.name } catch (_: Exception) { null } ?: "平板设备"
-            binding.tvPropDevice.text = "$name (${activeDevice.address})"
+            binding.tvPropDevice.text = name
             binding.btnPropAction.text = getString(R.string.prop_btn_disconnect)
             binding.btnPropAction.setOnClickListener { disconnectAll() }
         } else if (isAnyConnecting) {
