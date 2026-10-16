@@ -114,18 +114,33 @@ class RemoteImeService : InputMethodService() {
             while (isRunning) {
                 var ss: BluetoothServerSocket? = null
                 try {
-                    Log.d(TAG, "Listening for RFCOMM SPP with UUID: ${RfcommConstants.SPP_UUID}")
+                    Log.d(TAG, "Listening for RFCOMM SPP with UUID: ${RfcommConstants.AIRCURSOR_UUID}")
                     ss = try {
                         bluetoothAdapter.listenUsingRfcommWithServiceRecord(
                             RfcommConstants.SERVICE_NAME,
-                            RfcommConstants.SPP_UUID
+                            RfcommConstants.AIRCURSOR_UUID
                         )
-                    } catch (e: Exception) {
-                        Log.w(TAG, "listenUsingRfcomm failed, trying insecure...", e)
-                        bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
-                            RfcommConstants.SERVICE_NAME,
-                            RfcommConstants.SPP_UUID
-                        )
+                    } catch (e1: Exception) {
+                        Log.w(TAG, "listenUsingRfcomm AIRCURSOR_UUID failed, trying insecure...", e1)
+                        try {
+                            bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
+                                RfcommConstants.SERVICE_NAME,
+                                RfcommConstants.AIRCURSOR_UUID
+                            )
+                        } catch (e2: Exception) {
+                            Log.w(TAG, "listenUsingInsecure AIRCURSOR_UUID failed, trying SPP_UUID fallback...", e2)
+                            try {
+                                bluetoothAdapter.listenUsingRfcommWithServiceRecord(
+                                    RfcommConstants.SERVICE_NAME,
+                                    RfcommConstants.SPP_UUID
+                                )
+                            } catch (e3: Exception) {
+                                bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
+                                    RfcommConstants.SERVICE_NAME,
+                                    RfcommConstants.SPP_UUID
+                                )
+                            }
+                        }
                     }
                     serverSocket = ss
 

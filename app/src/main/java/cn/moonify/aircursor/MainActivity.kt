@@ -37,9 +37,11 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
 import cn.moonify.aircursor.bluetooth.HidMouseManager
+import cn.moonify.aircursor.bluetooth.PinyinConverter
 import cn.moonify.aircursor.bluetooth.RfcommClientManager
 import cn.moonify.aircursor.bluetooth.RfcommConstants
 import cn.moonify.aircursor.databinding.ActivityMainBinding
+import java.util.concurrent.Executors
 import kotlin.experimental.and
 import kotlin.experimental.inv
 import kotlin.experimental.or
@@ -148,6 +150,11 @@ class MainActivity : AppCompatActivity() {
         setupUI()
         setupListeners()
         checkAndRequestPermissions()
+
+        // 异步预加载离线拼音字典，确保输入中文时零延迟
+        Executors.newSingleThreadExecutor().execute {
+            PinyinConverter.init(applicationContext)
+        }
 
         Toast.makeText(this, "AirCursor v${BuildConfig.VERSION_NAME} (构建: ${BuildConfig.BUILD_TIME})", Toast.LENGTH_SHORT).show()
     }
@@ -413,13 +420,7 @@ class MainActivity : AppCompatActivity() {
                 if (composingStart == -1) {
                     val textToSend = s.toString()
                     if (textToSend.isNotEmpty()) {
-                        // 1. 发送给平板 RemoteImeService (如果平板当前输入法是 AirCursor)
-                        rfcommClientManager.sendText(textToSend)
-
-                        // 2. 如果是纯英文字母/拼音且处于外接键盘模式，也发送 HID 击键给 vivo 输入法候选栏
-                        if (hidMouseManager.isComboMode && textToSend.all { it.code in 32..126 }) {
-                            hidMouseManager.sendKeyboardText(textToSend)
-                        }
+                        sendTextToTablet(textToSend)
 
                         isInternalClearing = true
                         s.clear()
@@ -461,6 +462,31 @@ class MainActivity : AppCompatActivity() {
                     updateStatusText()
                 }
             }
+        }
+    }
+
+    /**
+     * 智能双通道发送文本至平板：
+     * 1. 串口已连接时：走 RFCOMM SPP 直接落字（适合平板运行 AirCursor 输入法，100% 原始 UTF-8 字符精准上屏）；
+     * 2. 串口未开启/未连接时（走 HID 直连）：自动将中文转译为拼音击键并映射中英文标点，模拟外接物理键盘无缝触发 vivo 等平板候选栏与上屏；
+     * 3. 纯鼠标模式且串口未连接时：友好弹出 Toast 提示开启复合模式。
+     */
+    private fun sendTextToTablet(text: String) {
+        val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
+
+        if (rfConnected) {
+            rfcommClientManager.sendText(text)
+        } else if (hidConnected && hidMouseManager.isComboMode) {
+            hidMouseManager.sendChineseTextAsPinyin(text)
+        } else if (hidConnected && !hidMouseManager.isComboMode) {
+            Toast.makeText(
+                this,
+                "当前为纯鼠标模式。输入中文请在设置中开启【外接键盘复合模式】或在平板启用 AirCursor 输入法",
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            Toast.makeText(this, "未连接平板设备，无法发送文本", Toast.LENGTH_SHORT).show()
         }
     }
 

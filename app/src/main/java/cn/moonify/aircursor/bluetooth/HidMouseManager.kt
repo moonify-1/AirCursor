@@ -167,6 +167,7 @@ class HidMouseManager(private val context: Context) {
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var hidDevice: BluetoothHidDevice? = null
     private val executor = Executors.newCachedThreadPool()
+    private val keyboardExecutor = Executors.newSingleThreadExecutor()
 
     @Volatile
     var isAppRegistered = false
@@ -414,27 +415,34 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
-     * 发送实体键盘按键报文 (按下后自动释放)：
-     * 仅在 Combo 模式下有效，直接由平板底层 input subsystem 接收并转送给活动输入法（如 vivo 输入法）
+     * 底层同步发送单个按键按下与释放报文（必须在单线程队列 keyboardExecutor 中执行，确保严格时序）：
      */
     @SuppressLint("MissingPermission")
-    fun sendKeyboardKey(keycode: Byte, modifier: Byte = 0) {
+    private fun sendKeySync(keycode: Byte, modifier: Byte = 0) {
         val hid = hidDevice ?: return
         val device = connectedDevice ?: return
-        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
+        try {
+            // Key Down
+            val press = byteArrayOf(modifier, 0, keycode, 0, 0, 0, 0, 0)
+            hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), press)
+            Thread.sleep(15)
+            // Key Up
+            val release = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+            hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), release)
+            Thread.sleep(15)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in sendKeySync $keycode", e)
+        }
+    }
 
-        executor.execute {
-            try {
-                // Key Down
-                val press = byteArrayOf(modifier, 0, keycode, 0, 0, 0, 0, 0)
-                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), press)
-                Thread.sleep(15)
-                // Key Up
-                val release = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
-                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), release)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to sendKeyboardKey $keycode", e)
-            }
+    /**
+     * 发送实体键盘按键报文 (按下后自动释放)：
+     * 仅在 Combo 模式下有效，由专用单线程队列按序发送
+     */
+    fun sendKeyboardKey(keycode: Byte, modifier: Byte = 0) {
+        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
+        keyboardExecutor.execute {
+            sendKeySync(keycode, modifier)
         }
     }
 
@@ -443,14 +451,49 @@ class HidMouseManager(private val context: Context) {
      */
     fun sendKeyboardText(text: String) {
         if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
-        for (c in text) {
-            val mapping = charToKeycode(c)
-            if (mapping != null) {
-                sendKeyboardKey(mapping.first, mapping.second)
-                try {
-                    Thread.sleep(20)
-                } catch (_: InterruptedException) {
-                    break
+        keyboardExecutor.execute {
+            for (c in text) {
+                val mapping = charToKeycode(c)
+                if (mapping != null) {
+                    sendKeySync(mapping.first, mapping.second)
+                }
+            }
+        }
+    }
+
+    /**
+     * 将包含中文、英文、数字与中英文标点的字符串转译为 HID 击键序列：
+     * 1. 连续汉字：提取连续拼音并发送击键，随后自动发送空格键上屏候选词；
+     * 2. 中英文标点与特殊符号：直接映射对应键码发送；
+     * 3. 英文与数字：直接发送键盘按键。
+     */
+    fun sendChineseTextAsPinyin(text: String) {
+        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
+        keyboardExecutor.execute {
+            val actions = PinyinConverter.convertTextToKeystrokeActions(text)
+            for (action in actions) {
+                when (action) {
+                    is PinyinConverter.KeystrokeAction.PinyinSequence -> {
+                        for (c in action.pinyin) {
+                            val mapping = charToKeycode(c)
+                            if (mapping != null) {
+                                sendKeySync(mapping.first, mapping.second)
+                            }
+                        }
+                        // 发送空格键确认平板候选栏首选字词上屏
+                        sendKeySync(KEY_SPACE, 0)
+                        try {
+                            Thread.sleep(25)
+                        } catch (_: InterruptedException) {
+                            break
+                        }
+                    }
+                    is PinyinConverter.KeystrokeAction.DirectChar -> {
+                        val mapping = charToKeycode(action.char)
+                        if (mapping != null) {
+                            sendKeySync(mapping.first, mapping.second)
+                        }
+                    }
                 }
             }
         }
@@ -458,14 +501,21 @@ class HidMouseManager(private val context: Context) {
 
     private fun charToKeycode(c: Char): Pair<Byte, Byte>? {
         return when (c) {
+            // 英文小写
             in 'a'..'z' -> Pair((c - 'a' + 4).toByte(), 0.toByte())
-            in 'A'..'Z' -> Pair((c - 'A' + 4).toByte(), 0x02.toByte()) // Shift
+            // 英文大写 (Shift)
+            in 'A'..'Z' -> Pair((c - 'A' + 4).toByte(), 0x02.toByte())
+            // 数字
             in '1'..'9' -> Pair((c - '1' + 0x1E).toByte(), 0.toByte())
             '0' -> Pair(0x27.toByte(), 0.toByte())
+
+            // 控制字符
             ' ' -> Pair(KEY_SPACE, 0.toByte())
             '\n' -> Pair(KEY_ENTER, 0.toByte())
             '\b' -> Pair(KEY_BACKSPACE, 0.toByte())
             '\t' -> Pair(KEY_TAB, 0.toByte())
+
+            // ASCII 基础符号 (无 Shift)
             '-' -> Pair(0x2D.toByte(), 0.toByte())
             '=' -> Pair(0x2E.toByte(), 0.toByte())
             '[' -> Pair(0x2F.toByte(), 0.toByte())
@@ -473,9 +523,54 @@ class HidMouseManager(private val context: Context) {
             '\\' -> Pair(0x31.toByte(), 0.toByte())
             ';' -> Pair(0x33.toByte(), 0.toByte())
             '\'' -> Pair(0x34.toByte(), 0.toByte())
+            '`' -> Pair(0x35.toByte(), 0.toByte())
             ',' -> Pair(0x36.toByte(), 0.toByte())
             '.' -> Pair(0x37.toByte(), 0.toByte())
             '/' -> Pair(0x38.toByte(), 0.toByte())
+
+            // ASCII 上档符号 (带 Shift: 0x02)
+            '!' -> Pair(0x1E.toByte(), 0x02.toByte())
+            '@' -> Pair(0x1F.toByte(), 0x02.toByte())
+            '#' -> Pair(0x20.toByte(), 0x02.toByte())
+            '$' -> Pair(0x21.toByte(), 0x02.toByte())
+            '%' -> Pair(0x22.toByte(), 0x02.toByte())
+            '^' -> Pair(0x23.toByte(), 0x02.toByte())
+            '&' -> Pair(0x24.toByte(), 0x02.toByte())
+            '*' -> Pair(0x25.toByte(), 0x02.toByte())
+            '(' -> Pair(0x26.toByte(), 0x02.toByte())
+            ')' -> Pair(0x27.toByte(), 0x02.toByte())
+            '_' -> Pair(0x2D.toByte(), 0x02.toByte())
+            '+' -> Pair(0x2E.toByte(), 0x02.toByte())
+            '{' -> Pair(0x2F.toByte(), 0x02.toByte())
+            '}' -> Pair(0x30.toByte(), 0x02.toByte())
+            '|' -> Pair(0x31.toByte(), 0x02.toByte())
+            ':' -> Pair(0x33.toByte(), 0x02.toByte())
+            '"' -> Pair(0x34.toByte(), 0x02.toByte())
+            '~' -> Pair(0x35.toByte(), 0x02.toByte())
+            '<' -> Pair(0x36.toByte(), 0x02.toByte())
+            '>' -> Pair(0x37.toByte(), 0x02.toByte())
+            '?' -> Pair(0x38.toByte(), 0x02.toByte())
+
+            // 常见中文全角标点映射 (在中文输入法下发送对应物理键即可输出中文标点)
+            '，' -> Pair(0x36.toByte(), 0.toByte()) // 逗号
+            '。' -> Pair(0x37.toByte(), 0.toByte()) // 句号
+            '！' -> Pair(0x1E.toByte(), 0x02.toByte()) // 感叹号
+            '？' -> Pair(0x38.toByte(), 0x02.toByte()) // 问号
+            '：' -> Pair(0x33.toByte(), 0x02.toByte()) // 冒号
+            '；' -> Pair(0x33.toByte(), 0.toByte()) // 分号
+            '“', '”' -> Pair(0x34.toByte(), 0x02.toByte()) // 双引号
+            '‘', '’' -> Pair(0x34.toByte(), 0.toByte()) // 单引号
+            '（' -> Pair(0x26.toByte(), 0x02.toByte()) // 左圆括号
+            '）' -> Pair(0x27.toByte(), 0x02.toByte()) // 右圆括号
+            '【' -> Pair(0x2F.toByte(), 0.toByte()) // 左方括号
+            '】' -> Pair(0x30.toByte(), 0.toByte()) // 右方括号
+            '、' -> Pair(0x31.toByte(), 0.toByte()) // 顿号
+            '《' -> Pair(0x36.toByte(), 0x02.toByte()) // 左书名号
+            '》' -> Pair(0x37.toByte(), 0x02.toByte()) // 右书名号
+            '～' -> Pair(0x35.toByte(), 0x02.toByte()) // 波浪号
+            '—' -> Pair(0x2D.toByte(), 0x02.toByte()) // 破折号
+            '￥' -> Pair(0x21.toByte(), 0x02.toByte()) // 人民币符号
+            '…' -> Pair(0x23.toByte(), 0x02.toByte()) // 省略号
             else -> null
         }
     }
@@ -483,6 +578,8 @@ class HidMouseManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun release() {
         try {
+            keyboardExecutor.shutdown()
+            executor.shutdown()
             if (isAppRegistered) {
                 hidDevice?.unregisterApp()
                 isAppRegistered = false
