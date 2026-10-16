@@ -56,6 +56,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_TOUCHPAD_SENS = "touchpad_sens"
         private const val KEY_WHEEL_SENS = "wheel_sens"
+        private const val KEY_COMBO_MODE = "combo_mode"
 
         const val THEME_NIGHT = "night"
         const val THEME_LIGHT = "day"
@@ -376,8 +377,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Switch Combo mode (Keyboard + Mouse) vs Pure Mouse
-        binding.switchComboMode.isChecked = hidMouseManager.isComboMode
+        val savedComboMode = prefs.getBoolean(KEY_COMBO_MODE, false)
+        binding.switchComboMode.isChecked = savedComboMode
+        if (hidMouseManager.isComboMode != savedComboMode) {
+            hidMouseManager.switchMode(savedComboMode)
+        }
         binding.switchComboMode.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(KEY_COMBO_MODE, isChecked).apply()
             hidMouseManager.switchMode(isChecked)
             updateStatusText()
             if (isChecked) {
