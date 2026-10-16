@@ -257,11 +257,11 @@ class HidMouseManager(private val context: Context) {
         }
     }
 
-    // 默认从本地持久化配置读取，未配置时使用高精度智能触控板复合模式（MODE_TOUCHPAD）
+    // 默认从本地持久化配置读取，未配置时使用键盘+鼠标复合模式（MODE_COMBO）
     var hidMode: Int = try {
-        context.getSharedPreferences("aircursor_prefs", Context.MODE_PRIVATE).getInt("hid_mode", MODE_TOUCHPAD)
+        context.getSharedPreferences("aircursor_prefs", Context.MODE_PRIVATE).getInt("hid_mode", MODE_COMBO)
     } catch (_: Exception) {
-        MODE_TOUCHPAD
+        MODE_COMBO
     }
 
     val isTouchpadMode: Boolean get() = (hidMode == MODE_TOUCHPAD)
