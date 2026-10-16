@@ -239,6 +239,16 @@
                 android:textColorHint="@color/text_secondary"
                 android:textSize="13sp" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvGestureHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center"
+            android:text="@string/gesture_hint_bottom"
+            android:textColor="@color/text_secondary"
+            android:textSize="10.5sp" />
     </LinearLayout>
 
 
@@ -569,9 +579,44 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:lineSpacingExtra="3dp"
-                    android:text="• 三指上滑：在主控触控板上三指同时向上滑动，即可呼出平板后台多任务/应用选择界面（需开启【外接键盘复合模式】）。\n• 手机分屏屏蔽：AirCursor 已在全局底层禁用分屏模式，防止手机误触发三指上滑分屏。\n• 提示：若部分系统（如 vivo OriginOS）仍弹出系统级分屏拦截提示，可点击下方按钮前往手机设置彻底关闭【三指上滑分屏】。"
+                    android:text="• 【三指轻点】（强烈推荐）：三指在触控板上同时快速轻点一下，即可切换平板应用。由于手机分屏手势只监听滑动，轻点手势 100% 免疫手机三指分屏拦截，零误触！\n• 【三指上滑 / 横滑】：三指在触控板上向上滑动或左右横滑，超低位移灵敏触发。\n• 需开启【外接键盘复合模式】：平板切换多任务依靠键盘 Alt+Tab 指令，纯鼠标模式下无法发送键盘按键。"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/shortcut_selection_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <RadioGroup
+                    android:id="@+id/rgRecentsShortcut"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/rbShortcutAltTab"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:text="@string/shortcut_alt_tab"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbShortcutWinTab"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/shortcut_win_tab"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </RadioGroup>
 
                 <Button
                     android:id="@+id/btnOpenSplitSettings"
@@ -579,7 +624,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="40dp"
                     android:layout_marginTop="10dp"
-                    android:text="前往手机系统分屏设置"
+                    android:text="前往手机系统分屏设置 (彻底关闭手机分屏)"
                     android:textColor="@color/primary"
                     android:textSize="12sp" />
             </LinearLayout>

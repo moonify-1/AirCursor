@@ -55,6 +55,12 @@
     <string name="wheel_direction_natural">两指滑动方向 (默认)</string>
     <string name="wheel_direction_inverted">反向 (传统鼠标滚轮方向)</string>
 
+    <!-- Gesture & Recents Shortcut -->
+    <string name="shortcut_selection_title">平板后台/应用切换快捷键模式：</string>
+    <string name="shortcut_alt_tab">Alt + Tab (切换应用，推荐大多数平板)</string>
+    <string name="shortcut_win_tab">Win + Tab (任务视图 / 部分系统)</string>
+    <string name="gesture_hint_bottom">💡 提示：支持三指轻点、三指上滑或横滑切换平板软件（推荐三指轻点，免除手机分屏冲突）</string>
+
     <!-- Background Service & Notification -->
     <string name="notification_channel_name">AirCursor 后台连接服务</string>
     <string name="notification_channel_desc">在后台保持与平板设备的蓝牙连接</string>
