@@ -184,6 +184,68 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Quick Action Navigation Bar (Consumer Control: Home, Back, Volume) -->
+        <LinearLayout
+            android:id="@+id/layoutQuickActions"
+            android:layout_width="match_parent"
+            android:layout_height="38dp"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <Button
+                android:id="@+id/btnQuickBack"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:padding="0dp"
+                android:text="@string/quick_back"
+                android:textSize="12sp" />
+
+            <Space
+                android:layout_width="6dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/btnQuickHome"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:padding="0dp"
+                android:text="@string/quick_home"
+                android:textSize="12sp" />
+
+            <Space
+                android:layout_width="6dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/btnQuickVolDown"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:padding="0dp"
+                android:text="@string/quick_vol_down"
+                android:textSize="12sp" />
+
+            <Space
+                android:layout_width="6dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/btnQuickVolUp"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:padding="0dp"
+                android:text="@string/quick_vol_up"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <!-- Physical Left / Right Buttons -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -368,27 +430,80 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/settings_section_keyboard"
+                    android:text="@string/mode_selection_title"
                     android:textColor="@color/text_primary"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switchComboMode"
+                <RadioGroup
+                    android:id="@+id/rgHidMode"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:checked="false"
-                    android:text="实验性：外接键盘+鼠标复合模式"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/rbModeTouchpad"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:text="@string/mode_touchpad"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="28dp"
+                        android:layout_marginTop="1dp"
+                        android:lineSpacingExtra="2dp"
+                        android:text="@string/mode_touchpad_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbModeCombo"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="@string/mode_combo"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="28dp"
+                        android:layout_marginTop="1dp"
+                        android:text="@string/mode_combo_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbModePureMouse"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="@string/mode_pure_mouse"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="28dp"
+                        android:layout_marginTop="1dp"
+                        android:text="@string/mode_pure_mouse_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+                </RadioGroup>
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="默认关闭（使用纯标准 Boot 鼠标，稳定不乱窜）。若需开启复合模式，必须在平板蓝牙中【取消配对并重新配对】，避免蓝牙描述符缓存错位导致鼠标乱窜。"
-                    android:textColor="@color/text_secondary"
+                    android:layout_marginTop="8dp"
+                    android:text="⚠️ 提示：切换蓝牙工作模式后，若平板鼠标轴向或识别异常，请在平板系统蓝牙设置中【取消配对 / 忽略此设备】，然后重新搜索配对连接即可。"
+                    android:textColor="@color/accent_amber"
                     android:textSize="11sp" />
 
                 <View

@@ -13,11 +13,13 @@ import java.util.concurrent.Executors
 
 /**
  * Manages Bluetooth HID registration, connection, and report dispatch.
- * 支持两种模式：
- * 1. 外接键盘 + 鼠标复合模式 (Combo Mode，默认推荐)：
+ * 支持三种模式：
+ * 1. 原生多指触控板模式 (Precision Touchpad，默认推荐)：
+ *    - 注册为 Digitizer Touchpad，向平板提供最多 5 触点绝对多点触控与 Consumer Control（Home/Back/Volume）。
+ *    - 平板系统（Android 13/14+）原生接管多指手势、像素级平滑滚动（带惯性阻尼）、双指缩放及系统触控板设置！
+ * 2. 外接键盘 + 鼠标复合模式 (Combo Mode)：
  *    - 向平板注册为 SUBCLASS1_COMBO，系统识别为实体外接物理键盘与鼠标。
- *    - 平板保留默认 vivo 输入法时，点击输入栏不会弹出软键盘，而是自动唤起 vivo 物理键盘专属候选栏与悬浮输入条，光标正常显示与闪烁！
- * 2. 纯标准鼠标模式 (Pure Boot Mouse Mode)：
+ * 3. 纯标准鼠标模式 (Pure Boot Mouse Mode)：
  *    - 仅注册为 SUBCLASS1_MOUSE（4 字节标准鼠标报文，无 Report ID）。
  */
 class HidMouseManager(private val context: Context) {
@@ -25,8 +27,67 @@ class HidMouseManager(private val context: Context) {
     companion object {
         private const val TAG = "HidMouseManager"
 
+        const val MODE_TOUCHPAD = 0
+        const val MODE_COMBO = 1
+        const val MODE_PURE_MOUSE = 2
+
+        const val REPORT_ID_TOUCHPAD: Byte = 1
+        const val REPORT_ID_MAX_COUNT: Byte = 2
+        const val REPORT_ID_CONFIG: Byte = 3
+        const val REPORT_ID_CONSUMER: Byte = 4
+
         const val REPORT_ID_KEYBOARD: Byte = 1
         const val REPORT_ID_MOUSE: Byte = 2
+
+        // Consumer Control 按键掩码 (Report ID 4)
+        const val CONSUMER_VOLUME_UP: Byte = 0x01
+        const val CONSUMER_VOLUME_DOWN: Byte = 0x02
+        const val CONSUMER_MUTE: Byte = 0x04
+        const val CONSUMER_PLAY_PAUSE: Byte = 0x08
+        const val CONSUMER_HOME: Byte = 0x10
+        const val CONSUMER_BACK: Byte = 0x20
+
+        // ==================== 0. 原生高精度多指触控板描述符 (PTP + Consumer) ====================
+        val TOUCHPAD_REPORT_DESCRIPTOR = byteArrayOf(
+            0x05.toByte(), 0x0D.toByte(), 0x09.toByte(), 0x05.toByte(), 0xA1.toByte(), 0x01.toByte(), 0x85.toByte(), 0x01.toByte(), 0x05.toByte(), 0x0D.toByte(), 0x09.toByte(), 0x22.toByte(),
+            0xA1.toByte(), 0x02.toByte(), 0x09.toByte(), 0x42.toByte(), 0x15.toByte(), 0x00.toByte(), 0x25.toByte(), 0x01.toByte(), 0x75.toByte(), 0x01.toByte(), 0x95.toByte(), 0x01.toByte(),
+            0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x47.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x51.toByte(), 0x25.toByte(), 0x0F.toByte(), 0x75.toByte(), 0x04.toByte(),
+            0x81.toByte(), 0x02.toByte(), 0x75.toByte(), 0x02.toByte(), 0x81.toByte(), 0x03.toByte(), 0x05.toByte(), 0x01.toByte(), 0x26.toByte(), 0xFF.toByte(), 0x0F.toByte(), 0x75.toByte(),
+            0x10.toByte(), 0x55.toByte(), 0x0E.toByte(), 0x65.toByte(), 0x13.toByte(), 0x09.toByte(), 0x30.toByte(), 0x35.toByte(), 0x00.toByte(), 0x46.toByte(), 0x2C.toByte(), 0x01.toByte(),
+            0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x31.toByte(), 0x46.toByte(), 0x90.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0xC0.toByte(), 0x05.toByte(), 0x0D.toByte(),
+            0x09.toByte(), 0x22.toByte(), 0xA1.toByte(), 0x02.toByte(), 0x09.toByte(), 0x42.toByte(), 0x15.toByte(), 0x00.toByte(), 0x25.toByte(), 0x01.toByte(), 0x75.toByte(), 0x01.toByte(),
+            0x95.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x47.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x51.toByte(), 0x25.toByte(), 0x0F.toByte(),
+            0x75.toByte(), 0x04.toByte(), 0x81.toByte(), 0x02.toByte(), 0x75.toByte(), 0x02.toByte(), 0x81.toByte(), 0x03.toByte(), 0x05.toByte(), 0x01.toByte(), 0x26.toByte(), 0xFF.toByte(),
+            0x0F.toByte(), 0x75.toByte(), 0x10.toByte(), 0x55.toByte(), 0x0E.toByte(), 0x65.toByte(), 0x13.toByte(), 0x09.toByte(), 0x30.toByte(), 0x35.toByte(), 0x00.toByte(), 0x46.toByte(),
+            0x2C.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x31.toByte(), 0x46.toByte(), 0x90.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0xC0.toByte(),
+            0x05.toByte(), 0x0D.toByte(), 0x09.toByte(), 0x22.toByte(), 0xA1.toByte(), 0x02.toByte(), 0x09.toByte(), 0x42.toByte(), 0x15.toByte(), 0x00.toByte(), 0x25.toByte(), 0x01.toByte(),
+            0x75.toByte(), 0x01.toByte(), 0x95.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x47.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x51.toByte(),
+            0x25.toByte(), 0x0F.toByte(), 0x75.toByte(), 0x04.toByte(), 0x81.toByte(), 0x02.toByte(), 0x75.toByte(), 0x02.toByte(), 0x81.toByte(), 0x03.toByte(), 0x05.toByte(), 0x01.toByte(),
+            0x26.toByte(), 0xFF.toByte(), 0x0F.toByte(), 0x75.toByte(), 0x10.toByte(), 0x55.toByte(), 0x0E.toByte(), 0x65.toByte(), 0x13.toByte(), 0x09.toByte(), 0x30.toByte(), 0x35.toByte(),
+            0x00.toByte(), 0x46.toByte(), 0x2C.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x31.toByte(), 0x46.toByte(), 0x90.toByte(), 0x01.toByte(), 0x81.toByte(),
+            0x02.toByte(), 0xC0.toByte(), 0x05.toByte(), 0x0D.toByte(), 0x09.toByte(), 0x22.toByte(), 0xA1.toByte(), 0x02.toByte(), 0x09.toByte(), 0x42.toByte(), 0x15.toByte(), 0x00.toByte(),
+            0x25.toByte(), 0x01.toByte(), 0x75.toByte(), 0x01.toByte(), 0x95.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x47.toByte(), 0x81.toByte(), 0x02.toByte(),
+            0x09.toByte(), 0x51.toByte(), 0x25.toByte(), 0x0F.toByte(), 0x75.toByte(), 0x04.toByte(), 0x81.toByte(), 0x02.toByte(), 0x75.toByte(), 0x02.toByte(), 0x81.toByte(), 0x03.toByte(),
+            0x05.toByte(), 0x01.toByte(), 0x26.toByte(), 0xFF.toByte(), 0x0F.toByte(), 0x75.toByte(), 0x10.toByte(), 0x55.toByte(), 0x0E.toByte(), 0x65.toByte(), 0x13.toByte(), 0x09.toByte(),
+            0x30.toByte(), 0x35.toByte(), 0x00.toByte(), 0x46.toByte(), 0x2C.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x31.toByte(), 0x46.toByte(), 0x90.toByte(),
+            0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0xC0.toByte(), 0x05.toByte(), 0x0D.toByte(), 0x09.toByte(), 0x22.toByte(), 0xA1.toByte(), 0x02.toByte(), 0x09.toByte(), 0x42.toByte(),
+            0x15.toByte(), 0x00.toByte(), 0x25.toByte(), 0x01.toByte(), 0x75.toByte(), 0x01.toByte(), 0x95.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x47.toByte(),
+            0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x51.toByte(), 0x25.toByte(), 0x0F.toByte(), 0x75.toByte(), 0x04.toByte(), 0x81.toByte(), 0x02.toByte(), 0x75.toByte(), 0x02.toByte(),
+            0x81.toByte(), 0x03.toByte(), 0x05.toByte(), 0x01.toByte(), 0x26.toByte(), 0xFF.toByte(), 0x0F.toByte(), 0x75.toByte(), 0x10.toByte(), 0x55.toByte(), 0x0E.toByte(), 0x65.toByte(),
+            0x13.toByte(), 0x09.toByte(), 0x30.toByte(), 0x35.toByte(), 0x00.toByte(), 0x46.toByte(), 0x2C.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x31.toByte(),
+            0x46.toByte(), 0x90.toByte(), 0x01.toByte(), 0x81.toByte(), 0x02.toByte(), 0xC0.toByte(), 0x05.toByte(), 0x0D.toByte(), 0x55.toByte(), 0x0C.toByte(), 0x66.toByte(), 0x01.toByte(),
+            0x10.toByte(), 0x27.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x00.toByte(), 0x00.toByte(), 0x47.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x00.toByte(), 0x00.toByte(), 0x75.toByte(),
+            0x10.toByte(), 0x95.toByte(), 0x01.toByte(), 0x09.toByte(), 0x56.toByte(), 0x81.toByte(), 0x02.toByte(), 0x09.toByte(), 0x54.toByte(), 0x15.toByte(), 0x00.toByte(), 0x25.toByte(),
+            0x7F.toByte(), 0x75.toByte(), 0x08.toByte(), 0x81.toByte(), 0x02.toByte(), 0x05.toByte(), 0x09.toByte(), 0x19.toByte(), 0x01.toByte(), 0x29.toByte(), 0x02.toByte(), 0x15.toByte(),
+            0x00.toByte(), 0x25.toByte(), 0x01.toByte(), 0x75.toByte(), 0x01.toByte(), 0x95.toByte(), 0x02.toByte(), 0x81.toByte(), 0x02.toByte(), 0x75.toByte(), 0x06.toByte(), 0x95.toByte(),
+            0x01.toByte(), 0x81.toByte(), 0x03.toByte(), 0x05.toByte(), 0x0D.toByte(), 0x85.toByte(), 0x02.toByte(), 0x09.toByte(), 0x55.toByte(), 0x15.toByte(), 0x00.toByte(), 0x25.toByte(),
+            0x05.toByte(), 0x75.toByte(), 0x08.toByte(), 0x95.toByte(), 0x01.toByte(), 0xB1.toByte(), 0x02.toByte(), 0xC0.toByte(), 0x05.toByte(), 0x0D.toByte(), 0x09.toByte(), 0x0E.toByte(),
+            0xA1.toByte(), 0x01.toByte(), 0x85.toByte(), 0x03.toByte(), 0x09.toByte(), 0x22.toByte(), 0xA1.toByte(), 0x02.toByte(), 0x09.toByte(), 0x52.toByte(), 0x15.toByte(), 0x00.toByte(),
+            0x25.toByte(), 0x0A.toByte(), 0x75.toByte(), 0x08.toByte(), 0x95.toByte(), 0x01.toByte(), 0xB1.toByte(), 0x02.toByte(), 0xC0.toByte(), 0xC0.toByte(), 0x05.toByte(), 0x0C.toByte(),
+            0x09.toByte(), 0x01.toByte(), 0xA1.toByte(), 0x01.toByte(), 0x85.toByte(), 0x04.toByte(), 0x15.toByte(), 0x00.toByte(), 0x25.toByte(), 0x01.toByte(), 0x75.toByte(), 0x01.toByte(),
+            0x95.toByte(), 0x08.toByte(), 0x09.toByte(), 0xE9.toByte(), 0x09.toByte(), 0xEA.toByte(), 0x09.toByte(), 0xE2.toByte(), 0x09.toByte(), 0xCD.toByte(), 0x0A.toByte(), 0x23.toByte(),
+            0x02.toByte(), 0x0A.toByte(), 0x24.toByte(), 0x02.toByte(), 0x09.toByte(), 0xB5.toByte(), 0x09.toByte(), 0xB6.toByte(), 0x81.toByte(), 0x02.toByte(), 0xC0.toByte()
+        )
 
         // ==================== 1. 标准复合设备描述符 (键盘 + 鼠标) ====================
         val COMBO_REPORT_DESCRIPTOR = byteArrayOf(
@@ -206,12 +267,15 @@ class HidMouseManager(private val context: Context) {
         }
     }
 
-    // 默认从本地持久化配置读取，未配置时使用纯标准 Boot 鼠标模式（最稳定、无延迟）
-    var isComboMode: Boolean = try {
-        context.getSharedPreferences("aircursor_prefs", Context.MODE_PRIVATE).getBoolean("combo_mode", false)
+    // 默认从本地持久化配置读取，未配置时使用原生多指触控板模式（MODE_TOUCHPAD）
+    var hidMode: Int = try {
+        context.getSharedPreferences("aircursor_prefs", Context.MODE_PRIVATE).getInt("hid_mode", MODE_TOUCHPAD)
     } catch (_: Exception) {
-        false
+        MODE_TOUCHPAD
     }
+
+    val isTouchpadMode: Boolean get() = (hidMode == MODE_TOUCHPAD)
+    val isComboMode: Boolean get() = (hidMode == MODE_COMBO)
 
     @Volatile
     var currentProtocol: Byte = BluetoothHidDevice.PROTOCOL_REPORT_MODE
@@ -281,9 +345,29 @@ class HidMouseManager(private val context: Context) {
         @SuppressLint("MissingPermission")
         override fun onGetReport(device: BluetoothDevice?, type: Byte, id: Byte, bufferSize: Int) {
             super.onGetReport(device, type, id, bufferSize)
-            Log.d(TAG, "onGetReport: type=$type, id=$id, protocol=$currentProtocol, combo=$isComboMode")
-            if (type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
-                if (isComboMode && currentProtocol == BluetoothHidDevice.PROTOCOL_REPORT_MODE) {
+            Log.d(TAG, "onGetReport: type=$type, id=$id, protocol=$currentProtocol, mode=$hidMode")
+            if (type == BluetoothHidDevice.REPORT_TYPE_FEATURE) {
+                if (hidMode == MODE_TOUCHPAD) {
+                    if (id == REPORT_ID_MAX_COUNT) {
+                        hidDevice?.replyReport(device, type, id, byteArrayOf(5))
+                    } else if (id == REPORT_ID_CONFIG) {
+                        hidDevice?.replyReport(device, type, id, byteArrayOf(3))
+                    } else {
+                        hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_UNSUPPORTED_REQ)
+                    }
+                } else {
+                    hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_UNSUPPORTED_REQ)
+                }
+            } else if (type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
+                if (hidMode == MODE_TOUCHPAD) {
+                    if (id == REPORT_ID_TOUCHPAD) {
+                        hidDevice?.replyReport(device, type, id, ByteArray(29))
+                    } else if (id == REPORT_ID_CONSUMER) {
+                        hidDevice?.replyReport(device, type, id, byteArrayOf(0))
+                    } else {
+                        hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_UNSUPPORTED_REQ)
+                    }
+                } else if (isComboMode && currentProtocol == BluetoothHidDevice.PROTOCOL_REPORT_MODE) {
                     if (id == REPORT_ID_KEYBOARD) {
                         hidDevice?.replyReport(device, type, id, ByteArray(8))
                     } else if (id == REPORT_ID_MOUSE) {
@@ -359,46 +443,61 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
-     * 根据当前 isComboMode 模式注册 SDP 记录与 HID 描述符。
+     * 根据当前 hidMode 模式注册 SDP 记录与 HID 描述符。
      */
     @SuppressLint("MissingPermission")
     fun registerApp() {
         val hid = hidDevice ?: return
         if (isAppRegistered) return
 
-        val sdp = if (isComboMode) {
-            BluetoothHidDeviceAppSdpSettings(
-                "AirCursor Combo",
-                "AirCursor Keyboard & Mouse",
-                "AirCursor",
-                BluetoothHidDevice.SUBCLASS1_COMBO, // 0xC0: 复合设备 (键盘 + 鼠标)
-                COMBO_REPORT_DESCRIPTOR
-            )
-        } else {
-            BluetoothHidDeviceAppSdpSettings(
-                "AirCursor Mouse",
-                "AirCursor Boot Mouse",
-                "AirCursor",
-                BluetoothHidDevice.SUBCLASS1_MOUSE, // 0x80: 纯鼠标
-                PURE_MOUSE_REPORT_DESCRIPTOR
-            )
+        val sdp = when (hidMode) {
+            MODE_TOUCHPAD -> {
+                BluetoothHidDeviceAppSdpSettings(
+                    "AirCursor Touchpad",
+                    "AirCursor Precision Touchpad",
+                    "AirCursor",
+                    BluetoothHidDevice.SUBCLASS1_COMBO,
+                    TOUCHPAD_REPORT_DESCRIPTOR
+                )
+            }
+            MODE_COMBO -> {
+                BluetoothHidDeviceAppSdpSettings(
+                    "AirCursor Combo",
+                    "AirCursor Keyboard & Mouse",
+                    "AirCursor",
+                    BluetoothHidDevice.SUBCLASS1_COMBO, // 0xC0: 复合设备 (键盘 + 鼠标)
+                    COMBO_REPORT_DESCRIPTOR
+                )
+            }
+            else -> {
+                BluetoothHidDeviceAppSdpSettings(
+                    "AirCursor Mouse",
+                    "AirCursor Boot Mouse",
+                    "AirCursor",
+                    BluetoothHidDevice.SUBCLASS1_MOUSE, // 0x80: 纯鼠标
+                    PURE_MOUSE_REPORT_DESCRIPTOR
+                )
+            }
         }
 
         try {
             val success = hid.registerApp(sdp, null, null, executor, hidCallback)
-            Log.d(TAG, "registerApp invoked (combo=$isComboMode), success=$success")
+            Log.d(TAG, "registerApp invoked (mode=$hidMode), success=$success")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to registerApp", e)
         }
     }
 
     @SuppressLint("MissingPermission")
-    fun switchMode(comboMode: Boolean) {
-        if (isComboMode == comboMode) return
-        isComboMode = comboMode
+    fun switchMode(newMode: Int) {
+        if (hidMode == newMode) return
+        hidMode = newMode
         try {
             context.getSharedPreferences("aircursor_prefs", Context.MODE_PRIVATE)
-                .edit().putBoolean("combo_mode", comboMode).apply()
+                .edit()
+                .putInt("hid_mode", newMode)
+                .putBoolean("combo_mode", newMode == MODE_COMBO)
+                .apply()
         } catch (_: Exception) {}
         currentProtocol = BluetoothHidDevice.PROTOCOL_REPORT_MODE
         if (isAppRegistered) {
@@ -409,6 +508,82 @@ class HidMouseManager(private val context: Context) {
                 Log.e(TAG, "Failed to unregisterApp during mode switch", e)
             }
             registerApp()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun switchMode(comboMode: Boolean) {
+        switchMode(if (comboMode) MODE_COMBO else MODE_PURE_MOUSE)
+    }
+
+    private var scanTimeCounter: Int = 0
+
+    /**
+     * 发送原生高精度多指触控板报文 (Report ID 1)：
+     * 支持最多 5 个并发绝对坐标触点，由平板系统底层（Android 13/14+ TouchpadGesturesLibrary）
+     * 原生完成平滑滚动、自然惯性阻尼、双指缩放及三指原生手势。
+     */
+    @SuppressLint("MissingPermission")
+    fun sendTouchpadReport(
+        contacts: List<TouchContact>,
+        buttonState: Byte = 0
+    ): Boolean {
+        val hid = hidDevice ?: return false
+        val device = connectedDevice ?: return false
+
+        val report = ByteArray(29)
+        val activeCount = contacts.count { it.isDown }
+        val maxSlots = 5
+
+        for (i in 0 until maxSlots) {
+            val offset = i * 5
+            if (i < contacts.size) {
+                val c = contacts[i]
+                val contactIdBits = (c.id and 0x0F) shl 2
+                if (c.isDown) {
+                    report[offset] = (0x01 or 0x02 or contactIdBits).toByte()
+                } else {
+                    report[offset] = contactIdBits.toByte()
+                }
+                val clampedX = c.x.toInt().coerceIn(0, 4095)
+                val clampedY = c.y.toInt().coerceIn(0, 4095)
+                report[offset + 1] = (clampedX and 0xFF).toByte()
+                report[offset + 2] = ((clampedX shr 8) and 0x0F).toByte()
+                report[offset + 3] = (clampedY and 0xFF).toByte()
+                report[offset + 4] = ((clampedY shr 8) and 0x0F).toByte()
+            }
+        }
+
+        scanTimeCounter = (scanTimeCounter + 1) and 0xFFFF
+        report[25] = (scanTimeCounter and 0xFF).toByte()
+        report[26] = ((scanTimeCounter shr 8) and 0xFF).toByte()
+        report[27] = activeCount.toByte()
+        report[28] = (buttonState.toInt() and 0x03).toByte()
+
+        return try {
+            hid.sendReport(device, REPORT_ID_TOUCHPAD.toInt(), report)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to sendTouchpadReport", e)
+            false
+        }
+    }
+
+    /**
+     * 发送 Consumer Control 多媒体与系统按键（桌面 Home、返回 Back、音量加减等）
+     */
+    @SuppressLint("MissingPermission")
+    fun sendConsumerKey(keyMask: Byte) {
+        val hid = hidDevice ?: return
+        val device = connectedDevice ?: return
+
+        executor.execute {
+            try {
+                hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(keyMask))
+                Thread.sleep(20)
+                hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(0))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to sendConsumerKey $keyMask", e)
+            }
         }
     }
 

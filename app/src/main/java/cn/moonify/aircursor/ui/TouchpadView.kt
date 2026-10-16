@@ -8,12 +8,14 @@ import android.util.AttributeSet
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import cn.moonify.aircursor.bluetooth.TouchContact
 import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
  * Dedicated Touchpad View for capturing relative mouse movements, tap-to-click,
  * two-finger scrolling, and three-finger swipe up to switch background apps.
+ * Now also supports Native Multi-Touch Precision Touchpad reporting directly to Android tablets.
  */
 class TouchpadView @JvmOverloads constructor(
     context: Context,
@@ -22,6 +24,7 @@ class TouchpadView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     interface Callback {
+        fun onTouchpadReport(contacts: List<TouchContact>)
         fun onMove(dx: Int, dy: Int)
         fun onTap()
         fun onWheel(wheel: Int)
@@ -31,6 +34,7 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     var callback: Callback? = null
+    var isNativeTouchpadMode: Boolean = true
     var sensitivity: Float = 1.2f
     var scrollSensitivity: Float = 0.2f
 
@@ -110,9 +114,63 @@ class TouchpadView @JvmOverloads constructor(
         return if (count > 0) sumY / count else 0f
     }
 
+    private fun handleNativeTouchpadEvent(event: MotionEvent): Boolean {
+        val w = width.toFloat().coerceAtLeast(1f)
+        val h = height.toFloat().coerceAtLeast(1f)
+        val actionMasked = event.actionMasked
+
+        when (actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_POINTER_DOWN -> {
+                val list = mutableListOf<TouchContact>()
+                val count = event.pointerCount.coerceAtMost(5)
+                for (i in 0 until count) {
+                    val pid = event.getPointerId(i)
+                    val hidX = ((event.getX(i) / w) * 4095f).coerceIn(0f, 4095f)
+                    val hidY = ((event.getY(i) / h) * 4095f).coerceIn(0f, 4095f)
+                    list.add(TouchContact(id = pid, isDown = true, x = hidX, y = hidY))
+                }
+                callback?.onTouchpadReport(list)
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                val upIndex = event.actionIndex
+                val upId = event.getPointerId(upIndex)
+                val list = mutableListOf<TouchContact>()
+                val count = event.pointerCount.coerceAtMost(5)
+                for (i in 0 until count) {
+                    val pid = event.getPointerId(i)
+                    val hidX = ((event.getX(i) / w) * 4095f).coerceIn(0f, 4095f)
+                    val hidY = ((event.getY(i) / h) * 4095f).coerceIn(0f, 4095f)
+                    val isDown = (pid != upId)
+                    list.add(TouchContact(id = pid, isDown = isDown, x = hidX, y = hidY))
+                }
+                callback?.onTouchpadReport(list)
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val list = mutableListOf<TouchContact>()
+                val count = event.pointerCount.coerceAtMost(5)
+                for (i in 0 until count) {
+                    val pid = event.getPointerId(i)
+                    val hidX = ((event.getX(i) / w) * 4095f).coerceIn(0f, 4095f)
+                    val hidY = ((event.getY(i) / h) * 4095f).coerceIn(0f, 4095f)
+                    list.add(TouchContact(id = pid, isDown = false, x = hidX, y = hidY))
+                }
+                callback?.onTouchpadReport(list)
+                parent?.requestDisallowInterceptTouchEvent(false)
+                return true
+            }
+            else -> return super.onTouchEvent(event)
+        }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         parent?.requestDisallowInterceptTouchEvent(true)
+
+        if (isNativeTouchpadMode) {
+            return handleNativeTouchpadEvent(event)
+        }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {

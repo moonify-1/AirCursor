@@ -45,6 +45,7 @@ import cn.moonify.aircursor.bluetooth.HidMouseManager
 import cn.moonify.aircursor.bluetooth.PinyinConverter
 import cn.moonify.aircursor.bluetooth.RfcommClientManager
 import cn.moonify.aircursor.bluetooth.RfcommConstants
+import cn.moonify.aircursor.bluetooth.TouchContact
 import cn.moonify.aircursor.databinding.ActivityMainBinding
 import java.util.concurrent.Executors
 import kotlin.experimental.and
@@ -61,6 +62,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_WHEEL_SENS = "wheel_sens"
         private const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
         private const val KEY_COMBO_MODE = "combo_mode"
+        private const val KEY_HID_MODE = "hid_mode"
         private const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
 
         const val THEME_NIGHT = "night"
@@ -387,8 +389,16 @@ class MainActivity : AppCompatActivity() {
             showTabletGuideDialog()
         }
 
-        // Touchpad movements, tap, scroll, and 3-finger gestures
+        binding.touchpadView.isNativeTouchpadMode = hidMouseManager.isTouchpadMode
+        binding.layoutQuickActions.visibility = if (hidMouseManager.isTouchpadMode) View.VISIBLE else View.GONE
+
+        // Touchpad movements, tap, scroll, and multi-finger gestures
         binding.touchpadView.callback = object : cn.moonify.aircursor.ui.TouchpadView.Callback {
+            override fun onTouchpadReport(contacts: List<TouchContact>) {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendTouchpadReport(contacts, currentButtonState)
+            }
+
             override fun onMove(dx: Int, dy: Int) {
                 if (isInputModeActive) dismissInput()
                 hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0)
@@ -425,6 +435,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Quick Navigation Buttons (Home, Back, Volume)
+        binding.btnQuickBack.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_BACK)
+        }
+        binding.btnQuickHome.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_HOME)
+        }
+        binding.btnQuickVolDown.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_VOLUME_DOWN)
+        }
+        binding.btnQuickVolUp.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_VOLUME_UP)
+        }
+
         // 48dp Scroll wheel
         binding.wheelBarView.callback = object : cn.moonify.aircursor.ui.WheelBarView.Callback {
             override fun onWheel(wheel: Int) {
@@ -441,13 +469,21 @@ class MainActivity : AppCompatActivity() {
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    if (hidMouseManager.isTouchpadMode) {
+                        hidMouseManager.sendTouchpadReport(emptyList(), currentButtonState)
+                    } else {
+                        hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
                     currentButtonState = currentButtonState and HidMouseManager.BUTTON_LEFT.inv()
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    if (hidMouseManager.isTouchpadMode) {
+                        hidMouseManager.sendTouchpadReport(emptyList(), currentButtonState)
+                    } else {
+                        hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    }
                     true
                 }
                 else -> false
@@ -462,37 +498,56 @@ class MainActivity : AppCompatActivity() {
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     currentButtonState = currentButtonState or HidMouseManager.BUTTON_RIGHT
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    if (hidMouseManager.isTouchpadMode) {
+                        hidMouseManager.sendTouchpadReport(emptyList(), currentButtonState)
+                    } else {
+                        hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
                     currentButtonState = currentButtonState and HidMouseManager.BUTTON_RIGHT.inv()
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    if (hidMouseManager.isTouchpadMode) {
+                        hidMouseManager.sendTouchpadReport(emptyList(), currentButtonState)
+                    } else {
+                        hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    }
                     true
                 }
                 else -> false
             }
         }
 
-        // Switch Combo mode (Keyboard + Mouse) vs Pure Mouse
-        val savedComboMode = prefs.getBoolean(KEY_COMBO_MODE, false)
-        binding.switchComboMode.isChecked = savedComboMode
-        if (hidMouseManager.isComboMode != savedComboMode) {
-            hidMouseManager.switchMode(savedComboMode)
+        // HID Working Mode RadioGroup (Touchpad vs Combo vs Pure Mouse)
+        when (hidMouseManager.hidMode) {
+            HidMouseManager.MODE_TOUCHPAD -> binding.rbModeTouchpad.isChecked = true
+            HidMouseManager.MODE_COMBO -> binding.rbModeCombo.isChecked = true
+            else -> binding.rbModePureMouse.isChecked = true
         }
-        binding.switchComboMode.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean(KEY_COMBO_MODE, isChecked).apply()
-            hidMouseManager.switchMode(isChecked)
-            updateStatusText()
-            if (isChecked) {
+
+        binding.rgHidMode.setOnCheckedChangeListener { _, checkedId ->
+            val newMode = when (checkedId) {
+                R.id.rbModeTouchpad -> HidMouseManager.MODE_TOUCHPAD
+                R.id.rbModeCombo -> HidMouseManager.MODE_COMBO
+                else -> HidMouseManager.MODE_PURE_MOUSE
+            }
+            if (hidMouseManager.hidMode != newMode) {
+                hidMouseManager.switchMode(newMode)
+                binding.touchpadView.isNativeTouchpadMode = (newMode == HidMouseManager.MODE_TOUCHPAD)
+                binding.layoutQuickActions.visibility = if (newMode == HidMouseManager.MODE_TOUCHPAD) View.VISIBLE else View.GONE
+                updateStatusText()
+
+                val modeName = when (newMode) {
+                    HidMouseManager.MODE_TOUCHPAD -> "【原生多指触控板】"
+                    HidMouseManager.MODE_COMBO -> "【外接键盘+鼠标】复合模式"
+                    else -> "【传统纯鼠标】标准模式"
+                }
                 AlertDialog.Builder(this)
-                    .setTitle("复合模式提示")
-                    .setMessage("已切换为【外接键盘+鼠标】复合模式。\n\n⚠️ 重要提示：\n由于平板系统会缓存蓝牙 HID 描述符，开启后强烈建议进入平板【蓝牙设置】，将手机【取消配对 / 忽略设备】后再重新配对连接！\n否则可能因平板使用旧描述符导致鼠标坐标轴错位或乱窜。")
+                    .setTitle("工作模式切换提示")
+                    .setMessage("已切换为 $modeName。\n\n⚠️ 重要提示：\n由于平板系统会强缓存蓝牙 HID 描述符，更换模式后强烈建议进入平板【蓝牙设置】，将手机【取消配对 / 忽略设备】后再重新配对连接！\n否则可能因平板使用旧模式描述符导致光标错位或无法识别触控手势。")
                     .setPositiveButton("知道了", null)
                     .show()
-            } else {
-                Toast.makeText(this, "已切换为【纯鼠标】标准模式（最稳定，推荐）", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -779,7 +834,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val modeTag = if (hidMouseManager.isComboMode) "HID键盘鼠标" else "HID纯鼠标"
+        val modeTag = when (hidMouseManager.hidMode) {
+            HidMouseManager.MODE_TOUCHPAD -> "HID原生触控板"
+            HidMouseManager.MODE_COMBO -> "HID键盘鼠标"
+            else -> "HID纯鼠标"
+        }
         val hidState = hidMouseManager.connectionState
         val hidStateStr = when (hidState) {
             BluetoothProfile.STATE_CONNECTED -> "$modeTag: 已连接"
@@ -870,11 +929,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. Combo mode Badge
-        if (hidMouseManager.isComboMode) {
-            updateBadge(binding.tvBadgeCombo, "⌨ 物理键盘开启", R.color.primary, R.color.tab_bg)
-        } else {
-            updateBadge(binding.tvBadgeCombo, "🖱 纯鼠标模式", R.color.badge_gray_text, R.color.badge_gray_bg)
+        // 3. Mode Badge
+        when (hidMouseManager.hidMode) {
+            HidMouseManager.MODE_TOUCHPAD -> {
+                updateBadge(binding.tvBadgeCombo, "✨ 原生触控板", R.color.primary, R.color.tab_bg)
+            }
+            HidMouseManager.MODE_COMBO -> {
+                updateBadge(binding.tvBadgeCombo, "⌨ 键盘+鼠标", R.color.primary, R.color.tab_bg)
+            }
+            else -> {
+                updateBadge(binding.tvBadgeCombo, "🖱 纯鼠标模式", R.color.badge_gray_text, R.color.badge_gray_bg)
+            }
         }
     }
 
@@ -950,7 +1015,7 @@ class MainActivity : AppCompatActivity() {
                 "💡 提示：开启复合模式后，如平板鼠标坐标出现漂移，进入平板蓝牙设置将手机【取消配对】再重新连接一次即可恢复正常。"
             )
             .setPositiveButton("立即开启") { _, _ ->
-                binding.switchComboMode.isChecked = true
+                binding.rbModeCombo.isChecked = true
             }
             .setNegativeButton("取消", null)
             .show()
