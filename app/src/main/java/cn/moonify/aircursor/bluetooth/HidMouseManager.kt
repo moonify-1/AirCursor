@@ -357,17 +357,24 @@ class HidMouseManager(private val context: Context) {
 
         try {
             Log.d(TAG, "Connecting HID to ${device.address}")
+            connectionState = BluetoothProfile.STATE_CONNECTING
+            listener?.onConnectionStateChanged(device, BluetoothProfile.STATE_CONNECTING)
             hid.connect(device)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to connect HID to ${device.address}", e)
+            connectionState = BluetoothProfile.STATE_DISCONNECTED
+            listener?.onConnectionStateChanged(device, BluetoothProfile.STATE_DISCONNECTED)
         }
     }
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
+        targetDeviceToConnect = null
         val hid = hidDevice ?: return
         val target = connectedDevice ?: return
         try {
+            connectionState = BluetoothProfile.STATE_DISCONNECTING
+            listener?.onConnectionStateChanged(target, BluetoothProfile.STATE_DISCONNECTING)
             hid.disconnect(target)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to disconnect HID", e)

@@ -50,4 +50,13 @@
     <!-- Sensitivity -->
     <string name="sensitivity_touchpad">触控板灵敏度: %s</string>
     <string name="sensitivity_wheel">滚轮滑动灵敏度: %s</string>
+
+    <!-- Background Service & Notification -->
+    <string name="notification_channel_name">AirCursor 后台连接服务</string>
+    <string name="notification_channel_desc">在后台保持与平板设备的蓝牙连接</string>
+    <string name="notification_title_connected">AirCursor 正在后台保持连接</string>
+    <string name="notification_title_reconnecting">AirCursor 正在重新连接</string>
+    <string name="notification_title_connecting">AirCursor 正在连接</string>
+    <string name="notification_title_idle">AirCursor 后台服务就绪</string>
+    <string name="notification_action_disconnect">断开连接</string>
 </resources>

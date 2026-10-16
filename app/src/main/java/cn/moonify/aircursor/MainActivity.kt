@@ -29,11 +29,13 @@ import android.widget.ArrayAdapter
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
 import cn.moonify.aircursor.bluetooth.HidMouseManager
 import cn.moonify.aircursor.bluetooth.RfcommClientManager
 import cn.moonify.aircursor.bluetooth.RfcommConstants
@@ -61,8 +63,9 @@ class MainActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
-    private lateinit var hidMouseManager: HidMouseManager
-    private val rfcommClientManager = RfcommClientManager()
+    private val connectionManager = AirCursorConnectionManager.instance
+    private val hidMouseManager get() = connectionManager.hidMouseManager
+    private val rfcommClientManager get() = connectionManager.rfcommClientManager
 
     private val pairedDevices = mutableListOf<BluetoothDevice>()
     private lateinit var spinnerAdapter: ArrayAdapter<String>
@@ -72,11 +75,45 @@ class MainActivity : AppCompatActivity() {
 
     private var isInternalClearing = false
 
+    private val connectionListener = object : AirCursorConnectionManager.Listener {
+        override fun onStateChanged() {
+            runOnUiThread { updateStatusText() }
+        }
+
+        override fun onReconnectProgress(attempt: Int, maxAttempts: Int, message: String) {
+            runOnUiThread { updateStatusText() }
+        }
+
+        override fun onReconnectFailed(device: BluetoothDevice?) {
+            runOnUiThread {
+                val deviceName = device?.let {
+                    try { it.name } catch (_: Exception) { null } ?: it.address
+                } ?: "设备"
+                Toast.makeText(this@MainActivity, "重连失败：多次尝试未能连接至 $deviceName", Toast.LENGTH_LONG).show()
+                updateStatusText()
+            }
+        }
+
+        override fun onError(message: String) {
+            runOnUiThread {
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
+                updateStatusText()
+            }
+        }
+    }
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        if (allGranted) {
+        val btGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions[Manifest.permission.BLUETOOTH_CONNECT] != false &&
+            permissions[Manifest.permission.BLUETOOTH_ADVERTISE] != false &&
+            permissions[Manifest.permission.BLUETOOTH_SCAN] != false
+        } else {
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] != false
+        }
+
+        if (btGranted) {
             onPermissionsGranted()
         } else {
             Toast.makeText(this, "需要蓝牙权限才能连接平板设备", Toast.LENGTH_LONG).show()
@@ -92,7 +129,21 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        hidMouseManager = HidMouseManager(this)
+        connectionManager.init(applicationContext)
+        connectionManager.addListener(connectionListener)
+
+        // 返回键行为：若当前连接中或正在保持连接，则退到后台，防止意外断开
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (connectionManager.isConnectedOrConnecting()) {
+                    moveTaskToBack(true)
+                    Toast.makeText(this@MainActivity, "AirCursor 正在后台保持连接", Toast.LENGTH_SHORT).show()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         setupUI()
         setupListeners()
@@ -413,6 +464,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (connectionManager.isInitialized) {
+            updateStatusText()
+        }
+    }
+
     private fun checkAndRequestPermissions() {
         val neededPermissions = mutableListOf<String>()
 
@@ -432,6 +490,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Android 13+ 通知权限，用于前台连接保活通知
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                neededPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
         if (neededPermissions.isNotEmpty()) {
             permissionLauncher.launch(neededPermissions.toTypedArray())
         } else {
@@ -440,8 +505,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onPermissionsGranted() {
-        hidMouseManager.init()
+        connectionManager.init(applicationContext)
         refreshPairedDevices()
+        // 每次打开时，尝试自动连接上次已连接成功的设备
+        connectionManager.autoConnectLastDevice(this)
     }
 
     @SuppressLint("MissingPermission")
@@ -455,16 +522,26 @@ class MainActivity : AppCompatActivity() {
         spinnerAdapter.clear()
 
         val bonded = bluetoothAdapter.bondedDevices
+        val lastAddr = connectionManager.getLastConnectedAddress()
+        var selectedPos = -1
+
         if (bonded.isNullOrEmpty()) {
             spinnerAdapter.add("未找到已配对设备 (请先在系统设置中配对)")
         } else {
-            for (device in bonded) {
+            for ((index, device) in bonded.withIndex()) {
                 pairedDevices.add(device)
                 val deviceName = device.name ?: "未知设备"
                 spinnerAdapter.add("$deviceName (${device.address})")
+                if (lastAddr != null && device.address.equals(lastAddr, ignoreCase = true)) {
+                    selectedPos = index
+                }
             }
         }
         spinnerAdapter.notifyDataSetChanged()
+
+        if (selectedPos != -1) {
+            binding.spnDevices.setSelection(selectedPos)
+        }
     }
 
     private fun connectToSelectedDevice() {
@@ -477,23 +554,40 @@ class MainActivity : AppCompatActivity() {
         val device = pairedDevices[selectedIndex]
         Toast.makeText(this, "正在连接平板: ${device.name ?: device.address}...", Toast.LENGTH_SHORT).show()
 
-        // 1. Connect HID Mouse & Keyboard
-        hidMouseManager.connect(device)
-
-        // 2. Connect RFCOMM SPP Channel (静默连接，避免在 vivo 模式下弹出无谓的失败提示)
-        rfcommClientManager.connect(device, silentIfFailed = hidMouseManager.isComboMode)
-
+        connectionManager.connect(device)
         updateStatusText()
     }
 
     private fun disconnectAll() {
-        hidMouseManager.disconnect()
-        rfcommClientManager.disconnect()
+        connectionManager.disconnectAll(manual = true)
         updateStatusText()
         Toast.makeText(this, "已断开连接", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateStatusText() {
+        if (!connectionManager.isInitialized) {
+            binding.tvStatus.text = "HID纯鼠标: 未就绪  |  串口通道: 未连接"
+            binding.tvStatus.setTextColor(Color.parseColor("#EF4444"))
+            updateConnectionProperties()
+            return
+        }
+
+        if (connectionManager.isReconnecting) {
+            val attempt = connectionManager.reconnectAttempt
+            val max = AirCursorConnectionManager.MAX_RECONNECT_ATTEMPTS
+            binding.tvStatus.text = "正在重新连接 ($attempt/$max)..."
+            binding.tvStatus.setTextColor(Color.parseColor("#F59E0B")) // Amber
+            updateConnectionProperties()
+            return
+        }
+
+        if (connectionManager.isConfirmedUnreachable) {
+            binding.tvStatus.text = "已断开 (已重试${AirCursorConnectionManager.MAX_RECONNECT_ATTEMPTS}次，确认无法连接)"
+            binding.tvStatus.setTextColor(Color.parseColor("#EF4444")) // Red
+            updateConnectionProperties()
+            return
+        }
+
         val modeTag = if (hidMouseManager.isComboMode) "HID键盘鼠标" else "HID纯鼠标"
         val hidState = hidMouseManager.connectionState
         val hidStateStr = when (hidState) {
@@ -527,21 +621,38 @@ class MainActivity : AppCompatActivity() {
      * 更新鼠标主界面的紧凑连接属性卡片
      */
     private fun updateConnectionProperties() {
-        val activeDevice = hidMouseManager.connectedDevice ?: rfcommClientManager.connectedDevice
+        if (!connectionManager.isInitialized) return
+
+        val activeDevice = connectionManager.getActiveDevice()
         val hidState = hidMouseManager.connectionState
         val rfState = rfcommClientManager.connectionState
-        val isAnyConnected = hidState == BluetoothProfile.STATE_CONNECTED || rfState == RfcommClientManager.STATE_CONNECTED
-        val isAnyConnecting = hidState == BluetoothProfile.STATE_CONNECTING || rfState == RfcommClientManager.STATE_CONNECTING
+        val isAnyConnected = connectionManager.isConnected()
+        val isAnyConnecting = connectionManager.isConnecting()
+        val isReconnecting = connectionManager.isReconnecting
+        val isFailed = connectionManager.isConfirmedUnreachable
 
         // 1. Device name and action button
-        if (activeDevice != null && isAnyConnected) {
-            val name = activeDevice.name ?: "平板设备"
+        if (isReconnecting) {
+            val name = activeDevice?.let {
+                try { it.name } catch (_: Exception) { null } ?: it.address
+            } ?: "平板设备"
+            val attempt = connectionManager.reconnectAttempt
+            val max = AirCursorConnectionManager.MAX_RECONNECT_ATTEMPTS
+            binding.tvPropDevice.text = "正在重连: $name ($attempt/$max)"
+            binding.btnPropAction.text = getString(R.string.prop_btn_disconnect)
+            binding.btnPropAction.setOnClickListener { disconnectAll() }
+        } else if (activeDevice != null && isAnyConnected) {
+            val name = try { activeDevice.name } catch (_: Exception) { null } ?: "平板设备"
             binding.tvPropDevice.text = "$name (${activeDevice.address})"
             binding.btnPropAction.text = getString(R.string.prop_btn_disconnect)
             binding.btnPropAction.setOnClickListener { disconnectAll() }
         } else if (isAnyConnecting) {
             binding.tvPropDevice.text = "正在连接平板..."
             binding.btnPropAction.text = getString(R.string.prop_btn_settings)
+            binding.btnPropAction.setOnClickListener { switchTab(false) }
+        } else if (isFailed) {
+            binding.tvPropDevice.text = "连接断开 (确认无法连接)"
+            binding.btnPropAction.text = "去连接"
             binding.btnPropAction.setOnClickListener { switchTab(false) }
         } else {
             binding.tvPropDevice.text = getString(R.string.prop_device_none)
@@ -550,12 +661,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 2. HID Badge
-        when (hidState) {
-            BluetoothProfile.STATE_CONNECTED -> {
+        when {
+            isReconnecting -> {
+                updateBadge(binding.tvBadgeHid, "○ HID重连中", R.color.accent_amber, R.color.accent_amber_bg)
+            }
+            hidState == BluetoothProfile.STATE_CONNECTED -> {
                 updateBadge(binding.tvBadgeHid, "● HID已连接", R.color.accent_green, R.color.accent_green_bg)
             }
-            BluetoothProfile.STATE_CONNECTING -> {
+            hidState == BluetoothProfile.STATE_CONNECTING -> {
                 updateBadge(binding.tvBadgeHid, "○ HID连接中", R.color.accent_amber, R.color.accent_amber_bg)
+            }
+            isFailed -> {
+                updateBadge(binding.tvBadgeHid, "✕ HID已断开", R.color.accent_red, R.color.accent_red_bg)
             }
             else -> {
                 val text = if (hidMouseManager.isAppRegistered) "○ HID就绪" else "○ HID未就绪"
@@ -564,11 +681,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 3. RFCOMM Badge
-        when (rfState) {
-            RfcommClientManager.STATE_CONNECTED -> {
+        when {
+            isReconnecting -> {
+                updateBadge(binding.tvBadgeRfcomm, "○ 串口重连中", R.color.accent_amber, R.color.accent_amber_bg)
+            }
+            rfState == RfcommClientManager.STATE_CONNECTED -> {
                 updateBadge(binding.tvBadgeRfcomm, "● 串口已连接", R.color.accent_green, R.color.accent_green_bg)
             }
-            RfcommClientManager.STATE_CONNECTING -> {
+            rfState == RfcommClientManager.STATE_CONNECTING -> {
                 updateBadge(binding.tvBadgeRfcomm, "○ 串口连接中", R.color.accent_amber, R.color.accent_amber_bg)
             }
             else -> {
@@ -624,11 +744,11 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("知道了", null)
             .show()
-        }
+    }
 
     override fun onDestroy() {
         super.onDestroy()
-        hidMouseManager.release()
-        rfcommClientManager.release()
+        connectionManager.removeListener(connectionListener)
+        // 注意：不要在此处调用 connectionManager.release()，以便退至后台后继续保持蓝牙连接
     }
 }
