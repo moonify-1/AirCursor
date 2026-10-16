@@ -434,9 +434,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 软键盘回车/完成监听：当手机软键盘点击“完成/发送”或 Enter 键时，确保文本即时发送至平板
+        // 软键盘退格与回车拦截监听（解决手机软键盘在输入框为空时点击删除或回车无法转发至平板的问题）
+        binding.etInput.keyEventListener = object : cn.moonify.aircursor.ui.RemoteEditText.KeyEventListener {
+            override fun onEmptyBackspace() {
+                binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
+                rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+            }
+
+            override fun onEnterPressed() {
+                binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                val currentText = binding.etInput.text?.toString() ?: ""
+                if (currentText.isNotEmpty()) {
+                    sendTextToTablet(currentText)
+                    isInternalClearing = true
+                    binding.etInput.text?.clear()
+                    isInternalClearing = false
+                } else {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                }
+            }
+        }
+
+        // 软键盘回车/完成监听：当手机软键盘点击“完成/发送”或 Enter 键时，确保文本即时发送或转发物理回车
         binding.etInput.setOnEditorActionListener { _, actionId, event ->
-            if (actionId == EditorInfo.IME_ACTION_DONE || actionId == EditorInfo.IME_ACTION_SEND ||
+            if (actionId == EditorInfo.IME_ACTION_DONE ||
+                actionId == EditorInfo.IME_ACTION_SEND ||
+                actionId == EditorInfo.IME_ACTION_GO ||
+                actionId == EditorInfo.IME_ACTION_SEARCH ||
+                actionId == EditorInfo.IME_ACTION_NEXT ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
                 val currentText = binding.etInput.text?.toString() ?: ""
                 if (currentText.isNotEmpty()) {
@@ -444,6 +471,10 @@ class MainActivity : AppCompatActivity() {
                     isInternalClearing = true
                     binding.etInput.text?.clear()
                     isInternalClearing = false
+                } else {
+                    binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
                 }
                 true
             } else {

@@ -277,7 +277,7 @@
             </LinearLayout>
 
             <!-- EditText for Mobile Keyboard (Pinyin / Voice Input) -->
-            <EditText
+            <cn.moonify.aircursor.ui.RemoteEditText
                 android:id="@+id/etInput"
                 android:layout_width="match_parent"
                 android:layout_height="46dp"
@@ -285,7 +285,7 @@
                 android:background="@drawable/bg_edittext"
                 android:hint="@string/input_hint"
                 android:imeOptions="actionDone|flagNoExtractUi"
-                android:inputType="text|textMultiLine"
+                android:inputType="text"
                 android:paddingHorizontal="12dp"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_secondary"
