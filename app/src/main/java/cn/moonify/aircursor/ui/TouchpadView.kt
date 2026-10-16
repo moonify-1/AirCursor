@@ -158,10 +158,10 @@ class TouchpadView @JvmOverloads constructor(
     // 判定阈值 (根据设备密度自动缩放)
     private val maxTapDurationMs = 200L
     private val maxTapDistancePx get() = 15f * resources.displayMetrics.density
-    private val minThreeFingerSwipeDistancePx get() = 20f * resources.displayMetrics.density
-    private val minThreeFingerHorizontalSwipeDistancePx get() = 22f * resources.displayMetrics.density
-    private val maxThreeFingerTapDistancePx get() = 16f * resources.displayMetrics.density
-    private val maxThreeFingerTapDurationMs = 320L
+    private val minThreeFingerSwipeDistancePx get() = 14f * resources.displayMetrics.density
+    private val minThreeFingerHorizontalSwipeDistancePx get() = 14f * resources.displayMetrics.density
+    private val maxThreeFingerTapDistancePx get() = 36f * resources.displayMetrics.density
+    private val maxThreeFingerTapDurationMs = 550L
     private val flingThresholdPxPerMs = 0.30f
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -395,19 +395,19 @@ class TouchpadView @JvmOverloads constructor(
 
                     if (!hasTriggeredThreeFinger) {
                         // 1. 三指向上划动：进入后台/任务切换
-                        if (deltaY < -minThreeFingerSwipeDistancePx && abs(deltaY) > abs(deltaX) * 0.7f) {
+                        if (deltaY < -minThreeFingerSwipeDistancePx && abs(deltaY) > abs(deltaX) * 0.6f) {
                             hasTriggeredThreeFinger = true
                             performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                             callback?.onThreeFingerSwipeUp()
                         }
                         // 2. 三指向下划动：显示桌面
-                        else if (deltaY > minThreeFingerSwipeDistancePx && abs(deltaY) > abs(deltaX) * 0.7f) {
+                        else if (deltaY > minThreeFingerSwipeDistancePx && abs(deltaY) > abs(deltaX) * 0.6f) {
                             hasTriggeredThreeFinger = true
                             performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                             callback?.onThreeFingerSwipeDown()
                         }
                         // 3. 三指水平左右划动：切应用
-                        else if (abs(deltaX) > minThreeFingerHorizontalSwipeDistancePx && abs(deltaX) > abs(deltaY) * 1.1f) {
+                        else if (abs(deltaX) > minThreeFingerHorizontalSwipeDistancePx && abs(deltaX) > abs(deltaY) * 0.65f) {
                             hasTriggeredThreeFinger = true
                             performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                             val direction = if (deltaX > 0) 1 else -1
@@ -482,24 +482,43 @@ class TouchpadView @JvmOverloads constructor(
                     if (!hasTriggeredThreeFinger) {
                         val deltaX = lastThreeFingerFocusX - threeFingerStartX
                         val deltaY = lastThreeFingerFocusY - threeFingerStartY
-                        if (deltaY < -minThreeFingerSwipeDistancePx * 0.75f && abs(deltaY) > abs(deltaX) * 0.6f) {
+                        // 1. 抬起时结算三指上滑
+                        if (deltaY < -minThreeFingerSwipeDistancePx * 0.70f && abs(deltaY) > abs(deltaX) * 0.55f) {
                             hasTriggeredThreeFinger = true
                             performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                             callback?.onThreeFingerSwipeUp()
-                        } else if (abs(deltaX) > minThreeFingerHorizontalSwipeDistancePx * 0.75f && abs(deltaX) > abs(deltaY) * 1.0f) {
+                        }
+                        // 2. 抬起时结算三指向下滑 (桌面)
+                        else if (deltaY > minThreeFingerSwipeDistancePx * 0.70f && abs(deltaY) > abs(deltaX) * 0.55f) {
+                            hasTriggeredThreeFinger = true
+                            performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                            callback?.onThreeFingerSwipeDown()
+                        }
+                        // 3. 抬起时结算三指横滑 (切应用)
+                        else if (abs(deltaX) > minThreeFingerHorizontalSwipeDistancePx * 0.70f && abs(deltaX) > abs(deltaY) * 0.55f) {
                             hasTriggeredThreeFinger = true
                             performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                             val direction = if (deltaX > 0) 1 else -1
                             callback?.onThreeFingerHorizontalSwipe(direction)
-                        } else {
+                        }
+                        // 4. 抬起时结算三指轻点 (免除分屏干扰的核心稳定手势)
+                        else {
                             val duration = now - threeFingerStartTime
                             if (duration <= maxThreeFingerTapDurationMs && threeFingerMaxDistance <= maxThreeFingerTapDistancePx) {
+                                hasTriggeredThreeFinger = true
+                                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                callback?.onThreeFingerTap()
+                            } else if (duration <= 700L) {
+                                // 容错兜底：静止停留短时抬手也触发轻点，杜绝任何手指微颤造成的丢手势
                                 hasTriggeredThreeFinger = true
                                 performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 callback?.onThreeFingerTap()
                             }
                         }
                     }
+                    // 三指抬起后立即结束三指与滚动状态，防止残余单指/双指引起滚轮或光标跳跃
+                    hasThreeFingersInGesture = false
+                    isScrollMode = false
                 } else if (isScrollMode && event.pointerCount == 2) {
                     // 双指抬起：判定双指轻点 (右键) 或启动物理惯性滑行
                     val duration = now - twoFingerDownTime
@@ -541,11 +560,15 @@ class TouchpadView @JvmOverloads constructor(
                     if (!hasTriggeredThreeFinger) {
                         val deltaX = lastThreeFingerFocusX - threeFingerStartX
                         val deltaY = lastThreeFingerFocusY - threeFingerStartY
-                        if (deltaY < -minThreeFingerSwipeDistancePx * 0.75f && abs(deltaY) > abs(deltaX) * 0.6f) {
+                        if (deltaY < -minThreeFingerSwipeDistancePx * 0.70f && abs(deltaY) > abs(deltaX) * 0.55f) {
                             hasTriggeredThreeFinger = true
                             performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                             callback?.onThreeFingerSwipeUp()
-                        } else if (abs(deltaX) > minThreeFingerHorizontalSwipeDistancePx * 0.75f && abs(deltaX) > abs(deltaY) * 1.0f) {
+                        } else if (deltaY > minThreeFingerSwipeDistancePx * 0.70f && abs(deltaY) > abs(deltaX) * 0.55f) {
+                            hasTriggeredThreeFinger = true
+                            performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                            callback?.onThreeFingerSwipeDown()
+                        } else if (abs(deltaX) > minThreeFingerHorizontalSwipeDistancePx * 0.70f && abs(deltaX) > abs(deltaY) * 0.55f) {
                             hasTriggeredThreeFinger = true
                             performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                             val direction = if (deltaX > 0) 1 else -1
@@ -553,6 +576,10 @@ class TouchpadView @JvmOverloads constructor(
                         } else {
                             val duration = now - threeFingerStartTime
                             if (duration <= maxThreeFingerTapDurationMs && threeFingerMaxDistance <= maxThreeFingerTapDistancePx) {
+                                hasTriggeredThreeFinger = true
+                                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                callback?.onThreeFingerTap()
+                            } else if (duration <= 700L) {
                                 hasTriggeredThreeFinger = true
                                 performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 callback?.onThreeFingerTap()
@@ -593,6 +620,42 @@ class TouchpadView @JvmOverloads constructor(
                     callback?.onDragEnd()
                 }
                 stopKineticScroll()
+
+                // 核心防分屏拦截拯救机制：
+                // 当手机系统（如 vivo OriginOS、OPPO ColorOS、小米 HyperOS）的三指手势服务
+                // 截获三指划动/接触并强行向 App 派发 ACTION_CANCEL 时，根据此前已记录的位移特征紧急拯救并派发对应指令！
+                if (hasThreeFingersInGesture && !hasTriggeredThreeFinger) {
+                    val deltaX = lastThreeFingerFocusX - threeFingerStartX
+                    val deltaY = lastThreeFingerFocusY - threeFingerStartY
+                    val duration = now - threeFingerStartTime
+
+                    // 1. 若检测到向上位移特征（哪怕仅微移 -8dp 系统便切断事件），精准判定为三指上滑！
+                    if (deltaY < -8f * resources.displayMetrics.density) {
+                        hasTriggeredThreeFinger = true
+                        performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                        callback?.onThreeFingerSwipeUp()
+                    }
+                    // 2. 若检测到向下位移特征，判定为三指向下滑（显示桌面）
+                    else if (deltaY > 10f * resources.displayMetrics.density) {
+                        hasTriggeredThreeFinger = true
+                        performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                        callback?.onThreeFingerSwipeDown()
+                    }
+                    // 3. 若检测到水平位移特征，判定为三指横滑切应用
+                    else if (abs(deltaX) > 10f * resources.displayMetrics.density) {
+                        hasTriggeredThreeFinger = true
+                        performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                        val direction = if (deltaX > 0) 1 else -1
+                        callback?.onThreeFingerHorizontalSwipe(direction)
+                    }
+                    // 4. 若位移很小且在有效时长内，拯救为三指轻点
+                    else if (duration <= 700L) {
+                        hasTriggeredThreeFinger = true
+                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        callback?.onThreeFingerTap()
+                    }
+                }
+
                 isScrollMode = false
                 hasMultiFingerInGesture = false
                 hasThreeFingersInGesture = false

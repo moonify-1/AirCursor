@@ -464,7 +464,8 @@ class MainActivity : AppCompatActivity() {
 
             override fun onThreeFingerHorizontalSwipe(direction: Int) {
                 if (isInputModeActive) dismissInput()
-                handleThreeFingerAction("三指横滑")
+                val desc = if (direction > 0) "三指右滑" else "三指左滑"
+                handleThreeFingerAction(desc, reverse = (direction < 0))
             }
 
             override fun onThreeFingerTap() {
@@ -985,21 +986,22 @@ class MainActivity : AppCompatActivity() {
     /**
      * 处理三指手势（三指轻点、三指上滑、三指横滑）：切换平板当前软件或回到平板后台多任务界面
      */
-    private fun handleThreeFingerAction(gestureName: String) {
+    private fun handleThreeFingerAction(gestureName: String, reverse: Boolean = false) {
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
         val useAltTab = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) != SHORTCUT_WIN_TAB
 
-        if (hidConnected && hidMouseManager.isComboMode) {
-            hidMouseManager.sendRecentApps(useAltTab)
-            if (rfConnected) {
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-            }
-            val shortcutDesc = if (useAltTab) "Alt + Tab" else "Win + Tab"
-            Toast.makeText(this, "$gestureName：已发送 $shortcutDesc 切换平板应用", Toast.LENGTH_SHORT).show()
-        } else if (rfConnected) {
+        if (rfConnected) {
             rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
             Toast.makeText(this, "$gestureName：已通过串口触发平板后台", Toast.LENGTH_SHORT).show()
+        } else if (hidConnected && hidMouseManager.isComboMode) {
+            hidMouseManager.sendRecentApps(useAltTab, reverse)
+            val shortcutDesc = if (useAltTab) {
+                if (reverse) "Alt + Shift + Tab" else "Alt + Tab"
+            } else {
+                if (reverse) "Win + Shift + Tab" else "Win + Tab"
+            }
+            Toast.makeText(this, "$gestureName：已发送 $shortcutDesc 切换平板应用", Toast.LENGTH_SHORT).show()
         } else if (hidConnected && !hidMouseManager.isComboMode) {
             showEnableComboModeDialog(gestureName)
         } else {

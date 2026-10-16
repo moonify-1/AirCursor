@@ -653,34 +653,44 @@ class HidMouseManager(private val context: Context) {
      * 发送系统后台应用选择/多任务切换快捷指令：
      * @param useAltTab 为 true 时发送通用 Alt + Tab（Android 平板标准通用切换应用快捷键，推荐大多数平板），
      *                  为 false 时发送 Win/Meta + Tab。
+     * @param reverse 为 true 时附加 Shift 键（Alt + Shift + Tab / Win + Shift + Tab）反向循环切换。
      */
-    fun sendRecentApps(useAltTab: Boolean = true) {
-        if (!isKeyboardSupported) return
+    fun sendRecentApps(useAltTab: Boolean = true, reverse: Boolean = false) {
+        if (!isKeyboardSupported) {
+            Log.w(TAG, "sendRecentApps: keyboard not supported in mode $hidMode")
+            return
+        }
         keyboardExecutor.execute {
-            val hid = hidDevice ?: return@execute
-            val device = connectedDevice ?: return@execute
+            val hid = hidDevice
+            val device = connectedDevice
+            if (hid == null || device == null) {
+                Log.w(TAG, "sendRecentApps: hidDevice=$hid, connectedDevice=$device, cannot send report")
+                return@execute
+            }
             try {
-                // 0x04 为 Left Alt (Android 标准多任务/切应用快捷键), 0x08 为 Left GUI / Win 键
-                val modifier = if (useAltTab) 0x04.toByte() else 0x08.toByte()
+                // 0x04 为 Left Alt (Android 标准多任务/切应用快捷键), 0x08 为 Left GUI / Win 键, 0x02 为 Left Shift
+                val baseModifier: Byte = if (useAltTab) 0x04 else 0x08
+                val modifier: Byte = if (reverse) (baseModifier.toInt() or 0x02).toByte() else baseModifier
 
-                // 1. Modifier 按下
+                // 1. Modifier 按下 (提前 35ms 建立组合键状态)
                 val modDown = byteArrayOf(modifier, 0, 0, 0, 0, 0, 0, 0)
                 hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
-                Thread.sleep(25)
+                Thread.sleep(35)
 
-                // 2. Modifier + Tab 同时按下 (触发 Android 任务切换)
+                // 2. Modifier + Tab 同时按下 (保持 120ms，留给平板系统充足的响应、渲染和选定前台目标应用的时间)
                 val tabDown = byteArrayOf(modifier, 0, KEY_TAB, 0, 0, 0, 0, 0)
                 hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), tabDown)
-                Thread.sleep(60)
+                Thread.sleep(120)
 
-                // 3. Tab 释放 (保持 Modifier)
+                // 3. Tab 释放 (保持 Modifier 80ms，稳定锁定目标应用)
                 hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
-                Thread.sleep(25)
+                Thread.sleep(80)
 
-                // 4. 全部释放
+                // 4. 全部释放 (松开 Alt/Meta，触发平板最终切换)
                 val releaseAll = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
                 hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), releaseAll)
-                Thread.sleep(25)
+                Thread.sleep(30)
+                Log.d(TAG, "sendRecentApps: successfully sent shortcut (useAltTab=$useAltTab, reverse=$reverse)")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending recent apps shortcut", e)
             }
