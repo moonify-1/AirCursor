@@ -90,7 +90,7 @@ class AirCursorConnectionManager private constructor() {
 
         hidMouseManager = HidMouseManager(app)
 
-        hidMouseManager.listener = object : HidMouseManager.Listener {
+        hidMouseManager.addListener(object : HidMouseManager.Listener {
             override fun onHidServiceReady() {
                 notifyStateChanged()
             }
@@ -104,19 +104,19 @@ class AirCursorConnectionManager private constructor() {
                 if (state == BluetoothProfile.STATE_CONNECTED) {
                     onDeviceConnected(device)
                 } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
-                    onDeviceDisconnected(device)
+                    onDeviceDisconnected(device, isFromHid = true)
                 }
                 notifyStateChanged()
             }
-        }
+        })
 
-        rfcommClientManager.listener = object : RfcommClientManager.Listener {
+        rfcommClientManager.addListener(object : RfcommClientManager.Listener {
             override fun onConnectionStateChanged(state: Int, device: BluetoothDevice?) {
                 Log.d(TAG, "RFCOMM onConnectionStateChanged: device=${device?.address}, state=$state")
                 if (state == RfcommClientManager.STATE_CONNECTED) {
                     onDeviceConnected(device)
                 } else if (state == RfcommClientManager.STATE_DISCONNECTED) {
-                    onDeviceDisconnected(device)
+                    onDeviceDisconnected(device, isFromHid = false)
                 }
                 notifyStateChanged()
             }
@@ -124,7 +124,7 @@ class AirCursorConnectionManager private constructor() {
             override fun onError(message: String) {
                 notifyError(message)
             }
-        }
+        })
 
         hidMouseManager.init()
         isInitialized = true
@@ -210,6 +210,7 @@ class AirCursorConnectionManager private constructor() {
     fun isConnecting(): Boolean {
         if (!isInitialized) return false
         return hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTING ||
+                hidMouseManager.targetDeviceToConnect != null ||
                 rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTING
     }
 
@@ -245,14 +246,14 @@ class AirCursorConnectionManager private constructor() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun saveConnectedDevice(device: BluetoothDevice) {
+    fun saveConnectedDevice(device: BluetoothDevice) {
         targetDevice = device
         val p = prefs ?: return
         val name = try { device.name } catch (_: Exception) { null } ?: ""
         p.edit()
             .putString(KEY_LAST_DEVICE_ADDR, device.address)
             .putString(KEY_LAST_DEVICE_NAME, name)
-            .apply()
+            .commit()
         Log.d(TAG, "Persisted last connected device: ${device.address} ($name)")
     }
 
@@ -272,7 +273,18 @@ class AirCursorConnectionManager private constructor() {
         }
     }
 
-    private fun onDeviceDisconnected(device: BluetoothDevice?) {
+    private fun onDeviceDisconnected(device: BluetoothDevice?, isFromHid: Boolean) {
+        if (!isFromHid) {
+            // RFCOMM 仅为辅助输入法通道。若 HID 仍然处于已连接、正在连接或等待 SDP 注册就绪状态，
+            // 绝不能将整体连接标记为断开，直接忽略 RFCOMM 断开事件！
+            if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED ||
+                hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTING ||
+                hidMouseManager.targetDeviceToConnect != null) {
+                Log.d(TAG, "RFCOMM disconnected but HID is active/connecting (${hidMouseManager.connectionState}), ignoring.")
+                return
+            }
+        }
+
         // 若 HID 仍处于连接中，则整体连接仍然有效
         if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
             return
@@ -297,7 +309,8 @@ class AirCursorConnectionManager private constructor() {
         }
 
         if (isReconnecting) {
-            Log.d(TAG, "Already in reconnect flow, current attempt will proceed")
+            Log.d(TAG, "Already reconnecting, scheduling next attempt for ${target.address}")
+            scheduleNextReconnect(target)
             return
         }
 
@@ -386,6 +399,7 @@ class AirCursorConnectionManager private constructor() {
         isManualDisconnect = false
         isConfirmedUnreachable = false
         targetDevice = device
+        saveConnectedDevice(device)
         cancelPendingReconnect()
         isReconnecting = false
         reconnectAttempt = 0

@@ -21,9 +21,11 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.SeekBar
@@ -134,9 +136,13 @@ class MainActivity : AppCompatActivity() {
         connectionManager.init(applicationContext)
         connectionManager.addListener(connectionListener)
 
-        // 返回键行为：若当前连接中或正在保持连接，则退到后台，防止意外断开
+        // 返回键行为：若当前在设置页，则返回鼠标页；若当前连接中或正在保持连接，则退到后台，防止意外断开
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (binding.layoutSettingsContainer.visibility == View.VISIBLE) {
+                    switchTab(true)
+                    return
+                }
                 if (connectionManager.isConnectedOrConnecting()) {
                     moveTaskToBack(true)
                     Toast.makeText(this@MainActivity, "AirCursor 正在后台保持连接", Toast.LENGTH_SHORT).show()
@@ -395,15 +401,48 @@ class MainActivity : AppCompatActivity() {
         // Space button
         binding.btnSpace.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_SPACE)
-            rfcommClientManager.sendCommand(RfcommConstants.CMD_SPACE)
+            val currentText = binding.etInput.text?.toString() ?: ""
+            if (currentText.isNotEmpty()) {
+                sendTextToTablet(currentText)
+                isInternalClearing = true
+                binding.etInput.text?.clear()
+                isInternalClearing = false
+            } else {
+                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_SPACE)
+                rfcommClientManager.sendCommand(RfcommConstants.CMD_SPACE)
+            }
         }
 
         // Enter button
         binding.btnEnter.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
-            rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+            val currentText = binding.etInput.text?.toString() ?: ""
+            if (currentText.isNotEmpty()) {
+                sendTextToTablet(currentText)
+                isInternalClearing = true
+                binding.etInput.text?.clear()
+                isInternalClearing = false
+            } else {
+                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+            }
+        }
+
+        // 软键盘回车/完成监听：当手机软键盘点击“完成/发送”或 Enter 键时，确保文本即时发送至平板
+        binding.etInput.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_DONE || actionId == EditorInfo.IME_ACTION_SEND ||
+                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
+                val currentText = binding.etInput.text?.toString() ?: ""
+                if (currentText.isNotEmpty()) {
+                    sendTextToTablet(currentText)
+                    isInternalClearing = true
+                    binding.etInput.text?.clear()
+                    isInternalClearing = false
+                }
+                true
+            } else {
+                false
+            }
         }
 
         // Core Chinese Input Logic: Preventing Pinyin Composing Truncation
@@ -430,39 +469,6 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // HID Manager Callback
-        hidMouseManager.listener = object : HidMouseManager.Listener {
-            override fun onHidServiceReady() {
-                runOnUiThread { updateStatusText() }
-            }
-
-            override fun onAppRegistered(registered: Boolean) {
-                runOnUiThread {
-                    updateStatusText()
-                    if (registered) {
-                        Toast.makeText(this@MainActivity, "HID 鼠标服务注册成功", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-
-            override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
-                runOnUiThread { updateStatusText() }
-            }
-        }
-
-        // RFCOMM Manager Callback
-        rfcommClientManager.listener = object : RfcommClientManager.Listener {
-            override fun onConnectionStateChanged(state: Int, device: BluetoothDevice?) {
-                runOnUiThread { updateStatusText() }
-            }
-
-            override fun onError(message: String) {
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
-                    updateStatusText()
-                }
-            }
-        }
     }
 
     /**
@@ -494,6 +500,10 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (connectionManager.isInitialized) {
             updateStatusText()
+            refreshPairedDevices()
+            if (!connectionManager.isConnectedOrConnecting()) {
+                connectionManager.autoConnectLastDevice(this)
+            }
         }
     }
 

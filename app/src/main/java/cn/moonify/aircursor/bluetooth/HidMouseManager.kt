@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.util.Log
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 
 /**
@@ -155,7 +156,55 @@ class HidMouseManager(private val context: Context) {
         fun onConnectionStateChanged(device: BluetoothDevice?, state: Int)
     }
 
-    var listener: Listener? = null
+    private val listeners = CopyOnWriteArrayList<Listener>()
+
+    fun addListener(l: Listener) {
+        if (!listeners.contains(l)) {
+            listeners.add(l)
+        }
+    }
+
+    fun removeListener(l: Listener) {
+        listeners.remove(l)
+    }
+
+    var listener: Listener?
+        get() = listeners.firstOrNull()
+        set(value) {
+            if (value != null && !listeners.contains(value)) {
+                listeners.add(value)
+            }
+        }
+
+    private fun notifyHidServiceReady() {
+        for (l in listeners) {
+            try {
+                l.onHidServiceReady()
+            } catch (e: Exception) {
+                Log.e(TAG, "Listener onHidServiceReady error", e)
+            }
+        }
+    }
+
+    private fun notifyAppRegistered(registered: Boolean) {
+        for (l in listeners) {
+            try {
+                l.onAppRegistered(registered)
+            } catch (e: Exception) {
+                Log.e(TAG, "Listener onAppRegistered error", e)
+            }
+        }
+    }
+
+    private fun notifyConnectionStateChanged(device: BluetoothDevice?, state: Int) {
+        for (l in listeners) {
+            try {
+                l.onConnectionStateChanged(device, state)
+            } catch (e: Exception) {
+                Log.e(TAG, "Listener onConnectionStateChanged error", e)
+            }
+        }
+    }
 
     // 默认使用纯标准 Boot 鼠标模式（最稳定、无延迟、防止平板因描述符缓存错位导致乱窜）
     var isComboMode: Boolean = false
@@ -169,6 +218,14 @@ class HidMouseManager(private val context: Context) {
     private val executor = Executors.newCachedThreadPool()
     private val keyboardExecutor = Executors.newSingleThreadExecutor()
 
+    init {
+        try {
+            PinyinConverter.init(context.applicationContext)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to init PinyinConverter in HidMouseManager", e)
+        }
+    }
+
     @Volatile
     var isAppRegistered = false
         private set
@@ -181,14 +238,16 @@ class HidMouseManager(private val context: Context) {
     var connectionState: Int = BluetoothProfile.STATE_DISCONNECTED
         private set
 
-    private var targetDeviceToConnect: BluetoothDevice? = null
+    @Volatile
+    var targetDeviceToConnect: BluetoothDevice? = null
+        private set
 
     private val hidCallback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             super.onAppStatusChanged(pluggedDevice, registered)
             Log.d(TAG, "onAppStatusChanged: registered=$registered, pluggedDevice=$pluggedDevice")
             isAppRegistered = registered
-            listener?.onAppRegistered(registered)
+            notifyAppRegistered(registered)
 
             if (registered && targetDeviceToConnect != null) {
                 val target = targetDeviceToConnect
@@ -204,6 +263,7 @@ class HidMouseManager(private val context: Context) {
             connectionState = state
             if (state == BluetoothProfile.STATE_CONNECTED) {
                 connectedDevice = device
+                targetDeviceToConnect = null
                 currentProtocol = BluetoothHidDevice.PROTOCOL_REPORT_MODE
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 if (connectedDevice?.address == device?.address) {
@@ -211,7 +271,7 @@ class HidMouseManager(private val context: Context) {
                 }
                 currentProtocol = BluetoothHidDevice.PROTOCOL_REPORT_MODE
             }
-            listener?.onConnectionStateChanged(device, state)
+            notifyConnectionStateChanged(device, state)
         }
 
         @SuppressLint("MissingPermission")
@@ -260,7 +320,7 @@ class HidMouseManager(private val context: Context) {
             if (connectedDevice?.address == device?.address) {
                 connectedDevice = null
                 connectionState = BluetoothProfile.STATE_DISCONNECTED
-                listener?.onConnectionStateChanged(device, BluetoothProfile.STATE_DISCONNECTED)
+                notifyConnectionStateChanged(device, BluetoothProfile.STATE_DISCONNECTED)
             }
         }
     }
@@ -271,7 +331,7 @@ class HidMouseManager(private val context: Context) {
                 Log.d(TAG, "Bluetooth HID Device profile connected")
                 hidDevice = proxy as? BluetoothHidDevice
                 registerApp()
-                listener?.onHidServiceReady()
+                notifyHidServiceReady()
             }
         }
 
@@ -359,12 +419,12 @@ class HidMouseManager(private val context: Context) {
         try {
             Log.d(TAG, "Connecting HID to ${device.address}")
             connectionState = BluetoothProfile.STATE_CONNECTING
-            listener?.onConnectionStateChanged(device, BluetoothProfile.STATE_CONNECTING)
+            notifyConnectionStateChanged(device, BluetoothProfile.STATE_CONNECTING)
             hid.connect(device)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to connect HID to ${device.address}", e)
             connectionState = BluetoothProfile.STATE_DISCONNECTED
-            listener?.onConnectionStateChanged(device, BluetoothProfile.STATE_DISCONNECTED)
+            notifyConnectionStateChanged(device, BluetoothProfile.STATE_DISCONNECTED)
         }
     }
 
@@ -375,7 +435,7 @@ class HidMouseManager(private val context: Context) {
         val target = connectedDevice ?: return
         try {
             connectionState = BluetoothProfile.STATE_DISCONNECTING
-            listener?.onConnectionStateChanged(target, BluetoothProfile.STATE_DISCONNECTING)
+            notifyConnectionStateChanged(target, BluetoothProfile.STATE_DISCONNECTING)
             hid.disconnect(target)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to disconnect HID", e)
@@ -425,11 +485,11 @@ class HidMouseManager(private val context: Context) {
             // Key Down
             val press = byteArrayOf(modifier, 0, keycode, 0, 0, 0, 0, 0)
             hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), press)
-            Thread.sleep(15)
+            Thread.sleep(12)
             // Key Up
             val release = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
             hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), release)
-            Thread.sleep(15)
+            Thread.sleep(12)
         } catch (e: Exception) {
             Log.e(TAG, "Error in sendKeySync $keycode", e)
         }
@@ -440,7 +500,7 @@ class HidMouseManager(private val context: Context) {
      * 仅在 Combo 模式下有效，由专用单线程队列按序发送
      */
     fun sendKeyboardKey(keycode: Byte, modifier: Byte = 0) {
-        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
+        if (!isComboMode) return
         keyboardExecutor.execute {
             sendKeySync(keycode, modifier)
         }
@@ -450,7 +510,7 @@ class HidMouseManager(private val context: Context) {
      * 将 ASCII 字符串转换为 HID 按键序列发送给平板（供 vivo 物理键盘拼音候选栏输入）
      */
     fun sendKeyboardText(text: String) {
-        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
+        if (!isComboMode) return
         keyboardExecutor.execute {
             for (c in text) {
                 val mapping = charToKeycode(c)
@@ -463,14 +523,15 @@ class HidMouseManager(private val context: Context) {
 
     /**
      * 将包含中文、英文、数字与中英文标点的字符串转译为 HID 击键序列：
-     * 1. 连续汉字：提取连续拼音并发送击键，随后自动发送空格键上屏候选词；
+     * 1. 连续汉字：提取对应拼音英文字母击键序列，发送完毕后充分等待平板输入法候选栏渲染，并自动发送空格键上屏确认；
      * 2. 中英文标点与特殊符号：直接映射对应键码发送；
      * 3. 英文与数字：直接发送键盘按键。
      */
     fun sendChineseTextAsPinyin(text: String) {
-        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
+        if (!isComboMode) return
         keyboardExecutor.execute {
             val actions = PinyinConverter.convertTextToKeystrokeActions(text)
+            Log.d(TAG, "sendChineseTextAsPinyin: text='$text', generated ${actions.size} actions")
             for (action in actions) {
                 when (action) {
                     is PinyinConverter.KeystrokeAction.PinyinSequence -> {
@@ -480,18 +541,32 @@ class HidMouseManager(private val context: Context) {
                                 sendKeySync(mapping.first, mapping.second)
                             }
                         }
-                        // 发送空格键确认平板候选栏首选字词上屏
-                        sendKeySync(KEY_SPACE, 0)
+                        // 关键等待：给平板输入法核心引擎留出充分的拼音分词、候选词检索与候选悬浮窗渲染时间（80ms）
                         try {
-                            Thread.sleep(25)
+                            Thread.sleep(80)
                         } catch (_: InterruptedException) {
-                            break
+                            return@execute
+                        }
+
+                        // 发送空格键，提交确认平板候选栏首位汉字候选词上屏
+                        sendKeySync(KEY_SPACE, 0)
+
+                        // 关键等待：等待平板输入法完成 InputConnection.commitText() 并重置候选缓冲区（50ms）
+                        try {
+                            Thread.sleep(50)
+                        } catch (_: InterruptedException) {
+                            return@execute
                         }
                     }
                     is PinyinConverter.KeystrokeAction.DirectChar -> {
                         val mapping = charToKeycode(action.char)
                         if (mapping != null) {
                             sendKeySync(mapping.first, mapping.second)
+                            try {
+                                Thread.sleep(20)
+                            } catch (_: InterruptedException) {
+                                return@execute
+                            }
                         }
                     }
                 }
@@ -571,6 +646,9 @@ class HidMouseManager(private val context: Context) {
             '—' -> Pair(0x2D.toByte(), 0x02.toByte()) // 破折号
             '￥' -> Pair(0x21.toByte(), 0x02.toByte()) // 人民币符号
             '…' -> Pair(0x23.toByte(), 0x02.toByte()) // 省略号
+            '　' -> Pair(KEY_SPACE, 0.toByte()) // 全角空格
+            '０' -> Pair(0x27.toByte(), 0.toByte()) // 全角 0
+            in '１'..'９' -> Pair((c - '１' + 0x1E).toByte(), 0.toByte()) // 全角 1..9
             else -> null
         }
     }
