@@ -171,21 +171,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Backspace button (with short click and auto-repeat on hold)
+        // Switch Combo mode (Keyboard + Mouse) vs Pure Mouse
+        binding.switchComboMode.isChecked = hidMouseManager.isComboMode
+        binding.switchComboMode.setOnCheckedChangeListener { _, isChecked ->
+            hidMouseManager.switchMode(isChecked)
+            updateStatusText()
+            Toast.makeText(
+                this,
+                if (isChecked) "已切换为【键盘+鼠标】复合模式 (适配vivo候选栏)" else "已切换为【纯鼠标】模式",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        // Backspace button (dispatches both HID hardware key and RFCOMM command)
         binding.btnBackspace.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
             rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
         }
 
         // Space button
         binding.btnSpace.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_SPACE)
             rfcommClientManager.sendCommand(RfcommConstants.CMD_SPACE)
         }
 
         // Enter button
         binding.btnEnter.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
             rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
         }
 
@@ -203,7 +218,14 @@ class MainActivity : AppCompatActivity() {
                 if (composingStart == -1) {
                     val textToSend = s.toString()
                     if (textToSend.isNotEmpty()) {
+                        // 1. 发送给平板 RemoteImeService (如果平板当前输入法是 AirCursor)
                         rfcommClientManager.sendText(textToSend)
+
+                        // 2. 如果是纯英文字母/拼音且处于外接键盘模式，也发送 HID 击键给 vivo 输入法候选栏
+                        if (hidMouseManager.isComboMode && textToSend.all { it.code in 32..126 }) {
+                            hidMouseManager.sendKeyboardText(textToSend)
+                        }
+
                         isInternalClearing = true
                         s.clear()
                         isInternalClearing = false
@@ -328,24 +350,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateStatusText() {
+        val modeTag = if (hidMouseManager.isComboMode) "HID键盘鼠标" else "HID纯鼠标"
         val hidState = hidMouseManager.connectionState
         val hidStateStr = when (hidState) {
-            BluetoothProfile.STATE_CONNECTED -> "HID鼠标: 已连接"
-            BluetoothProfile.STATE_CONNECTING -> "HID鼠标: 连接中…"
-            else -> if (hidMouseManager.isAppRegistered) "HID鼠标: 就绪(未连接)" else "HID鼠标: 未就绪"
+            BluetoothProfile.STATE_CONNECTED -> "$modeTag: 已连接"
+            BluetoothProfile.STATE_CONNECTING -> "$modeTag: 连接中…"
+            else -> if (hidMouseManager.isAppRegistered) "$modeTag: 就绪" else "$modeTag: 未就绪"
         }
 
         val rfState = rfcommClientManager.connectionState
         val rfStateStr = when (rfState) {
-            RfcommClientManager.STATE_CONNECTED -> "键盘串口: 已连接"
-            RfcommClientManager.STATE_CONNECTING -> "键盘串口: 连接中…"
-            else -> "键盘串口: 未连接"
+            RfcommClientManager.STATE_CONNECTED -> "中文通道: 已连接"
+            RfcommClientManager.STATE_CONNECTING -> "中文通道: 连接中…"
+            else -> "中文通道: 未连接"
         }
 
         val fullStatus = "$hidStateStr  |  $rfStateStr"
         binding.tvStatus.text = fullStatus
 
-        if (hidState == BluetoothProfile.STATE_CONNECTED && rfState == RfcommClientManager.STATE_CONNECTED) {
+        if (hidState == BluetoothProfile.STATE_CONNECTED) {
             binding.tvStatus.setTextColor(Color.parseColor("#10B981")) // Green
         } else if (hidState == BluetoothProfile.STATE_CONNECTING || rfState == RfcommClientManager.STATE_CONNECTING) {
             binding.tvStatus.setTextColor(Color.parseColor("#F59E0B")) // Amber
@@ -356,8 +379,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun showTabletGuideDialog() {
         AlertDialog.Builder(this)
-            .setTitle(getString(R.string.tablet_ime_title))
-            .setMessage("【作为平板接收端使用说明】\n\n1. 将本应用安装在平板上；\n2. 在平板上打开【系统设置 -> 语言与输入法】启用【AirCursor 无界面输入法】；\n3. 切换默认输入法为 AirCursor（该输入法高度为 0dp，不遮挡平板屏幕）；\n4. 手机与平板完成经典蓝牙配对后，手机端点击连接即可同时遥控鼠标与汉字上屏！")
+            .setTitle("平板使用模式说明")
+            .setMessage(
+                "本应用支持两种平板工作模式：\n\n" +
+                "【模式一：推荐！保留 vivo 默认输入法】\n" +
+                "1. 平板保持系统默认的【vivo 输入法】（无需切换）；\n" +
+                "2. 手机端开启【物理外接键盘模式】并连接平板；\n" +
+                "3. 平板识别到外接物理键盘后，点击任何输入框均不会弹出全尺寸软键盘，而是自动弹出 vivo 专属的外接键盘悬浮候选栏与快捷条，光标正常闪烁！\n\n" +
+                "【模式二：AirCursor 极简直接上屏模式】\n" +
+                "1. 在平板【语言与输入法】中将默认输入法切换为【AirCursor】；\n" +
+                "2. 已修复点击输入框无光标问题（已更新为 1px 响应视图）；\n" +
+                "3. 点击输入框正常出现闪烁光标，且屏幕完全无键盘遮挡，手机端输入中文直接落字上屏！"
+            )
             .setPositiveButton(getString(R.string.enable_ime_btn)) { _, _ ->
                 val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
                 startActivity(intent)
@@ -366,7 +399,7 @@ class MainActivity : AppCompatActivity() {
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 imm?.showInputMethodPicker()
             }
-            .setNegativeButton("关闭", null)
+            .setNegativeButton("知道了", null)
             .show()
     }
 

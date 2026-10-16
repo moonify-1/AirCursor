@@ -88,11 +88,21 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchComboMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:checked="true"
+            android:text="物理外接键盘模式 (默认开启: 适配vivo悬浮候选栏)"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+
         <TextView
             android:id="@+id/tvStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="4dp"
             android:text="@string/status_disconnected"
             android:textColor="@color/accent_red"
             android:textSize="12sp" />
