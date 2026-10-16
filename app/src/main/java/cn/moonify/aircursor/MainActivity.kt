@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     private var currentButtonState: Byte = 0x00
 
     private var isInternalClearing = false
+    private var isInputModeActive = false
 
     private val connectionListener = object : AirCursorConnectionManager.Listener {
         override fun onStateChanged() {
@@ -225,6 +226,31 @@ class MainActivity : AppCompatActivity() {
         updateConnectionProperties()
     }
 
+    /**
+     * 控制输入模式：点击输入框时隐藏顶部的“鼠标触控”导航栏和“目标平板”连接卡片，
+     * 取消输入后重新显示，为触控板和输入法腾出最大垂直高度。
+     */
+    private fun setInputModeActive(active: Boolean) {
+        if (isInputModeActive == active) return
+        isInputModeActive = active
+        if (active) {
+            binding.layoutTabContainer.visibility = View.GONE
+            binding.cardConnectionProps.visibility = View.GONE
+        } else {
+            binding.layoutTabContainer.visibility = View.VISIBLE
+            binding.cardConnectionProps.visibility = View.VISIBLE
+        }
+    }
+
+    private fun dismissInput() {
+        if (binding.etInput.isFocused) {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
+            binding.etInput.clearFocus()
+        }
+        setInputModeActive(false)
+    }
+
     private fun switchTab(isMouseTab: Boolean) {
         if (isMouseTab) {
             binding.layoutMouseContainer.visibility = View.VISIBLE
@@ -237,7 +263,17 @@ class MainActivity : AppCompatActivity() {
             binding.btnTabSettings.setBackgroundColor(Color.TRANSPARENT)
             binding.btnTabSettings.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
             binding.btnTabSettings.setTypeface(null, Typeface.NORMAL)
+
+            if (isInputModeActive) {
+                binding.layoutTabContainer.visibility = View.GONE
+                binding.cardConnectionProps.visibility = View.GONE
+            } else {
+                binding.layoutTabContainer.visibility = View.VISIBLE
+                binding.cardConnectionProps.visibility = View.VISIBLE
+            }
         } else {
+            dismissInput()
+            binding.layoutTabContainer.visibility = View.VISIBLE
             binding.layoutMouseContainer.visibility = View.GONE
             binding.layoutSettingsContainer.visibility = View.VISIBLE
 
@@ -323,10 +359,12 @@ class MainActivity : AppCompatActivity() {
         // Touchpad movements, tap and two-finger scroll
         binding.touchpadView.callback = object : cn.moonify.aircursor.ui.TouchpadView.Callback {
             override fun onMove(dx: Int, dy: Int) {
+                if (isInputModeActive) dismissInput()
                 hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0)
             }
 
             override fun onTap() {
+                if (isInputModeActive) dismissInput()
                 // Send Left button click (Down then Up)
                 val downState = currentButtonState or HidMouseManager.BUTTON_LEFT
                 hidMouseManager.sendMouseReport(downState, 0, 0, 0)
@@ -336,10 +374,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onWheel(wheel: Int) {
+                if (isInputModeActive) dismissInput()
                 hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel)
             }
 
             override fun onThreeFingerSwipeUp() {
+                if (isInputModeActive) dismissInput()
                 handleThreeFingerSwipeUp()
             }
         }
@@ -347,6 +387,7 @@ class MainActivity : AppCompatActivity() {
         // 48dp Scroll wheel
         binding.wheelBarView.callback = object : cn.moonify.aircursor.ui.WheelBarView.Callback {
             override fun onWheel(wheel: Int) {
+                if (isInputModeActive) dismissInput()
                 hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel)
             }
         }
@@ -355,6 +396,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnLeftClick.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (isInputModeActive) dismissInput()
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
@@ -375,6 +417,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnRightClick.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (isInputModeActive) dismissInput()
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     currentButtonState = currentButtonState or HidMouseManager.BUTTON_RIGHT
@@ -444,6 +487,31 @@ class MainActivity : AppCompatActivity() {
                     hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
                     rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
                 }
+            }
+
+            override fun onInputCancelled() {
+                dismissInput()
+            }
+        }
+
+        // 输入栏焦点与点击监听：点击输入栏时隐藏上方目标平板和顶部鼠标触控导航栏，取消输入后再恢复
+        binding.etInput.setOnFocusChangeListener { _, hasFocus ->
+            setInputModeActive(hasFocus)
+        }
+        binding.etInput.setOnClickListener {
+            setInputModeActive(true)
+        }
+
+        // 监听软键盘折叠/收起：当用户关闭软键盘时自动退出输入状态并恢复上方目标平板和鼠标触控栏
+        val rootView = binding.root
+        rootView.viewTreeObserver.addOnGlobalLayoutListener {
+            val r = Rect()
+            rootView.getWindowVisibleDisplayFrame(r)
+            val screenHeight = rootView.rootView.height
+            val keypadHeight = screenHeight - r.bottom
+            val isKeyboardOpen = keypadHeight > screenHeight * 0.15
+            if (!isKeyboardOpen && isInputModeActive) {
+                dismissInput()
             }
         }
 
