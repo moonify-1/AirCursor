@@ -707,7 +707,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:lineSpacingExtra="3dp"
-                    android:text="• 【三指轻点】（强烈推荐）：三指在触控板上同时快速轻点一下，即可切换平板应用。由于手机分屏手势只监听滑动，轻点手势 100% 免疫手机三指分屏拦截，零误触！\n• 【三指上滑 / 横滑】：三指在触控板上向上滑动或左右横滑，超低位移灵敏触发。\n• 需开启【外接键盘复合模式】：平板切换多任务依靠键盘 Alt+Tab 指令，纯鼠标模式下无法发送键盘按键。"
+                    android:text="• 【三指上滑 / 轻点】：呼出平板后台多任务界面并保持停留，方便在平板卡片界面中自己挑选应用。\n• 【三指横滑】：直接快速切换应用（右滑切下一个应用，左滑反向循环切回上一个应用）。\n• 【防手机截屏与分屏冲突】：已内置 FLAG_SECURE 防截屏安全保护；同时建议点击下方按钮前往系统设置彻底关闭手机端的三指截屏与分屏手势。"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
 
@@ -746,15 +746,79 @@
                         android:textSize="13sp" />
                 </RadioGroup>
 
-                <Button
-                    android:id="@+id/btnOpenSplitSettings"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
+                <View
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
+                    android:layout_height="1dp"
+                    android:layout_marginVertical="10dp"
+                    android:background="@color/border_color" />
+
+                <!-- Anti-Screenshot Protection Switch -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="触控板防截屏保护 (FLAG_SECURE)"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="底层屏蔽当前窗口截屏，彻底杜绝三指下滑误触发手机截屏"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchAntiScreenshot"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true" />
+                </LinearLayout>
+
+                <!-- System Gesture Jump Buttons -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:text="前往手机系统分屏设置 (彻底关闭手机分屏)"
-                    android:textColor="@color/primary"
-                    android:textSize="12sp" />
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnOpenScreenshotSettings"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:text="前往关闭手机三指截屏"
+                        android:textColor="@color/primary"
+                        android:textSize="11.5sp" />
+
+                    <Space
+                        android:layout_width="8dp"
+                        android:layout_height="match_parent" />
+
+                    <Button
+                        android:id="@+id/btnOpenSplitSettings"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:text="前往关闭手机三指分屏"
+                        android:textColor="@color/primary"
+                        android:textSize="11.5sp" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- Section 6: About & Guide -->

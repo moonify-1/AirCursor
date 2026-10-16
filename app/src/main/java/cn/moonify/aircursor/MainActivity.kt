@@ -25,6 +25,7 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -66,6 +67,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_HID_MODE = "hid_mode"
         private const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
         private const val KEY_SHOW_MOUSE_BUTTONS = "show_mouse_buttons"
+        private const val KEY_ANTI_SCREENSHOT = "anti_screenshot"
 
         const val THEME_NIGHT = "night"
         const val THEME_LIGHT = "day"
@@ -148,6 +150,10 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 触控板防截屏保护：开启 FLAG_SECURE 屏蔽三指误触手机截屏
+        val antiScreenshot = prefs.getBoolean(KEY_ANTI_SCREENSHOT, true)
+        applyAntiScreenshot(antiScreenshot)
+
         // 优先将多指手势交由应用处理，抑制系统瞬态栏手势冲突
         WindowCompat.getInsetsController(window, window.decorView).systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -202,6 +208,18 @@ class MainActivity : AppCompatActivity() {
         }
         if (AppCompatDelegate.getDefaultNightMode() != targetNightMode) {
             AppCompatDelegate.setDefaultNightMode(targetNightMode)
+        }
+    }
+
+    /**
+     * 控制触控板界面防截屏保护：
+     * 开启 FLAG_SECURE 后，系统级拒绝触控板界面的任何截屏操作，防止三指操作误触发手机系统截屏
+     */
+    private fun applyAntiScreenshot(enabled: Boolean) {
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
     }
 
@@ -262,6 +280,10 @@ class MainActivity : AppCompatActivity() {
         // Initialize Touchpad mode
         val isNative = (hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD)
         binding.touchpadView.isNativeTouchpadMode = isNative
+
+        // Anti-Screenshot protection setup (default: true)
+        val antiScreenshot = prefs.getBoolean(KEY_ANTI_SCREENSHOT, true)
+        binding.switchAntiScreenshot.isChecked = antiScreenshot
 
         // Show version and build time
         binding.tvAboutVersion.text = "AirCursor v${BuildConfig.VERSION_NAME} (构建时间: ${BuildConfig.BUILD_TIME})"
@@ -464,7 +486,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onThreeFingerSwipeUp() {
                 if (isInputModeActive) dismissInput()
-                handleThreeFingerAction("三指上滑")
+                handleThreeFingerOverview("三指上滑")
             }
 
             override fun onThreeFingerSwipeDown() {
@@ -474,13 +496,12 @@ class MainActivity : AppCompatActivity() {
 
             override fun onThreeFingerHorizontalSwipe(direction: Int) {
                 if (isInputModeActive) dismissInput()
-                val desc = if (direction > 0) "三指右滑" else "三指左滑"
-                handleThreeFingerAction(desc, reverse = (direction < 0))
+                handleDirectAppSwitch(direction)
             }
 
             override fun onThreeFingerTap() {
                 if (isInputModeActive) dismissInput()
-                handleThreeFingerAction("三指轻点")
+                handleThreeFingerOverview("三指轻点")
             }
         }
 
@@ -582,6 +603,19 @@ class MainActivity : AppCompatActivity() {
         // Open Phone System Split-Screen Settings button
         binding.btnOpenSplitSettings.setOnClickListener {
             openSplitScreenSettings()
+        }
+
+        // Anti-Screenshot protection Switch
+        binding.switchAntiScreenshot.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(KEY_ANTI_SCREENSHOT, isChecked).apply()
+            applyAntiScreenshot(isChecked)
+            val tip = if (isChecked) "已开启触控板防截屏保护" else "已关闭触控板防截屏保护"
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
+        }
+
+        // Open Phone System Screenshot Settings button
+        binding.btnOpenScreenshotSettings.setOnClickListener {
+            openScreenshotSettings()
         }
 
         // Recents shortcut mode RadioGroup listener (Alt+Tab vs Win+Tab)
@@ -1000,16 +1034,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 处理三指手势（三指轻点、三指上滑、三指横滑）：切换平板当前软件或回到平板后台多任务界面
+     * 处理三指上滑与三指轻点手势：呼出平板后台多任务概览卡片，并停留在后台界面供用户自主选择应用
      */
-    private fun handleThreeFingerAction(gestureName: String, reverse: Boolean = false) {
+    private fun handleThreeFingerOverview(gestureName: String) {
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
-        val useAltTab = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) != SHORTCUT_WIN_TAB
+        val useWinTab = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) == SHORTCUT_WIN_TAB
 
         if (rfConnected) {
             rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-            Toast.makeText(this, "$gestureName：已通过串口触发平板后台", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "$gestureName：已呼出平板后台多任务界面", Toast.LENGTH_SHORT).show()
+        } else if (hidConnected && hidMouseManager.isComboMode) {
+            hidMouseManager.sendOverview(useWinTab)
+            Toast.makeText(this, "$gestureName：已呼出平板后台多任务界面", Toast.LENGTH_SHORT).show()
+        } else if (hidConnected && !hidMouseManager.isComboMode) {
+            showEnableComboModeDialog(gestureName)
+        } else {
+            Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 处理三指横滑手势：直接在应用间快速切换（右滑下一个应用，左滑上一个应用）
+     */
+    private fun handleDirectAppSwitch(direction: Int) {
+        val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
+        val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        val useAltTab = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) != SHORTCUT_WIN_TAB
+        val reverse = (direction < 0)
+        val desc = if (reverse) "三指左滑" else "三指右滑"
+
+        if (rfConnected) {
+            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
+            Toast.makeText(this, "$desc：已通过串口切换应用", Toast.LENGTH_SHORT).show()
         } else if (hidConnected && hidMouseManager.isComboMode) {
             hidMouseManager.sendRecentApps(useAltTab, reverse)
             val shortcutDesc = if (useAltTab) {
@@ -1017,9 +1074,9 @@ class MainActivity : AppCompatActivity() {
             } else {
                 if (reverse) "Win + Shift + Tab" else "Win + Tab"
             }
-            Toast.makeText(this, "$gestureName：已发送 $shortcutDesc 切换平板应用", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "$desc：已发送 $shortcutDesc 切换应用", Toast.LENGTH_SHORT).show()
         } else if (hidConnected && !hidMouseManager.isComboMode) {
-            showEnableComboModeDialog(gestureName)
+            showEnableComboModeDialog(desc)
         } else {
             Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
         }
@@ -1029,8 +1086,8 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("需开启外接键盘模式")
             .setMessage(
-                "检测到已触发【$gestureName】，切换平板软件界面需要发送实体键盘快捷指令（Alt + Tab）。\n\n" +
-                "当前处于【纯鼠标模式】（仅发送鼠标报文，不包含键盘通道）。\n\n" +
+                "检测到已触发【$gestureName】，控制平板软件界面需要发送实体键盘/多任务快捷指令。\n\n" +
+                "当前处于【纯鼠标模式】（仅发送鼠标报文，不包含键盘/多任务通道）。\n\n" +
                 "是否立即切换为【外接键盘+鼠标复合模式】？\n\n" +
                 "💡 提示：开启复合模式后，如平板鼠标坐标出现漂移，进入平板蓝牙设置将手机【取消配对】再重新连接一次即可恢复正常。"
             )
@@ -1039,6 +1096,30 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /**
+     * 打开手机系统截屏手势设置，方便用户彻底关闭系统全局的三指下滑截屏手势
+     */
+    private fun openScreenshotSettings() {
+        val targetIntents = listOf(
+            Intent().setClassName("com.vivo.upslide", "com.vivo.upslide.setting.SCaptureSettingActivity"),
+            Intent().setClassName("com.vivo.upslide", "com.vivo.upslide.setting.SuperCaptureSettingActivity"),
+            Intent().setClassName("com.android.settings", "com.android.settings.Settings\$ShortcutsAndAccessibilityActivity"),
+            Intent("com.vivo.settings.SHORTCUT_ACCESSIBILITY_SETTINGS"),
+            Intent("miui.intent.action.GESTURE_SETTINGS"),
+            Intent().setClassName("com.miui.securitycenter", "com.miui.gesture.GestureSettingsActivity"),
+            Intent().setClassName("com.oplus.gesture", "com.oplus.gesture.GestureSettingsActivity"),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        for (intent in targetIntents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return
+            } catch (_: Exception) {}
+        }
+        Toast.makeText(this, "请前往手机【系统设置 -> 快捷与辅助 -> 超级截屏】中关闭三指下滑截屏", Toast.LENGTH_LONG).show()
     }
 
     /**
