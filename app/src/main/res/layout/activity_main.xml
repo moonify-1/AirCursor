@@ -420,8 +420,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:checked="true"
-                    android:text="物理外接键盘模式 (默认开启)"
+                    android:checked="false"
+                    android:text="实验性：外接键盘+鼠标复合模式"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -429,7 +429,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="开启后适配平板端输入法（如 vivo 拼音悬浮候选栏），支持按键序列底层上屏；关闭则为纯文本串口模式。"
+                    android:text="默认关闭（使用纯标准 Boot 鼠标，稳定不乱窜）。若需开启复合模式，必须在平板蓝牙中【取消配对并重新配对】，避免蓝牙描述符缓存错位导致鼠标乱窜。"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
 

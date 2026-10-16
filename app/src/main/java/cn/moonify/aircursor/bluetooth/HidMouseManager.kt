@@ -157,8 +157,12 @@ class HidMouseManager(private val context: Context) {
 
     var listener: Listener? = null
 
-    // 默认启用 Combo 模式（外接键盘+鼠标），完美兼容 vivo 等平板的悬浮候选栏与物理键盘免遮挡模式
-    var isComboMode: Boolean = true
+    // 默认使用纯标准 Boot 鼠标模式（最稳定、无延迟、防止平板因描述符缓存错位导致乱窜）
+    var isComboMode: Boolean = false
+
+    @Volatile
+    var currentProtocol: Byte = BluetoothHidDevice.PROTOCOL_REPORT_MODE
+        private set
 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var hidDevice: BluetoothHidDevice? = null
@@ -199,10 +203,12 @@ class HidMouseManager(private val context: Context) {
             connectionState = state
             if (state == BluetoothProfile.STATE_CONNECTED) {
                 connectedDevice = device
+                currentProtocol = BluetoothHidDevice.PROTOCOL_REPORT_MODE
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 if (connectedDevice?.address == device?.address) {
                     connectedDevice = null
                 }
+                currentProtocol = BluetoothHidDevice.PROTOCOL_REPORT_MODE
             }
             listener?.onConnectionStateChanged(device, state)
         }
@@ -210,9 +216,9 @@ class HidMouseManager(private val context: Context) {
         @SuppressLint("MissingPermission")
         override fun onGetReport(device: BluetoothDevice?, type: Byte, id: Byte, bufferSize: Int) {
             super.onGetReport(device, type, id, bufferSize)
-            Log.d(TAG, "onGetReport: type=$type, id=$id")
+            Log.d(TAG, "onGetReport: type=$type, id=$id, protocol=$currentProtocol, combo=$isComboMode")
             if (type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
-                if (isComboMode) {
+                if (isComboMode && currentProtocol == BluetoothHidDevice.PROTOCOL_REPORT_MODE) {
                     if (id == REPORT_ID_KEYBOARD) {
                         hidDevice?.replyReport(device, type, id, ByteArray(8))
                     } else if (id == REPORT_ID_MOUSE) {
@@ -243,6 +249,7 @@ class HidMouseManager(private val context: Context) {
         override fun onSetProtocol(device: BluetoothDevice?, protocol: Byte) {
             super.onSetProtocol(device, protocol)
             Log.d(TAG, "onSetProtocol: protocol=$protocol")
+            currentProtocol = protocol
             hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_SUCCESS)
         }
 
@@ -324,6 +331,7 @@ class HidMouseManager(private val context: Context) {
     fun switchMode(comboMode: Boolean) {
         if (isComboMode == comboMode) return
         isComboMode = comboMode
+        currentProtocol = BluetoothHidDevice.PROTOCOL_REPORT_MODE
         if (isAppRegistered) {
             try {
                 hidDevice?.unregisterApp()
@@ -368,8 +376,8 @@ class HidMouseManager(private val context: Context) {
 
     /**
      * 发送鼠标位移与按键报文：
-     * - Combo 模式使用 REPORT_ID_MOUSE (2)
-     * - 纯鼠标模式使用 reportId = 0
+     * - 当处于 Combo 模式且 Host 协商为 REPORT_MODE 时使用 REPORT_ID_MOUSE (2)
+     * - 纯标准 Boot 鼠标模式（默认）或 Host 为 BOOT_MODE 时严格使用 reportId = 0，发送标准 4 字节报文
      */
     @SuppressLint("MissingPermission")
     fun sendMouseReport(buttonState: Byte, dx: Int, dy: Int, wheel: Int): Boolean {
@@ -381,7 +389,14 @@ class HidMouseManager(private val context: Context) {
         val clampedWheel = wheel.coerceIn(-127, 127).toByte()
 
         val report = byteArrayOf(buttonState, clampedDx, clampedDy, clampedWheel)
-        val reportId = if (isComboMode) REPORT_ID_MOUSE.toInt() else 0
+        // 核心防错位逻辑：
+        // 只有当明确开启 Combo 模式且主机未要求 BOOT_MODE 时才带 Report ID 2；
+        // 否则一律发送 reportId = 0，确保平板按照 [button, X, Y, Wheel] 顺序解析，彻底根除坐标轴颠倒和滑轮乱窜！
+        val reportId = if (isComboMode && currentProtocol == BluetoothHidDevice.PROTOCOL_REPORT_MODE) {
+            REPORT_ID_MOUSE.toInt()
+        } else {
+            0
+        }
 
         return try {
             hid.sendReport(device, reportId, report)
@@ -399,7 +414,7 @@ class HidMouseManager(private val context: Context) {
     fun sendKeyboardKey(keycode: Byte, modifier: Byte = 0) {
         val hid = hidDevice ?: return
         val device = connectedDevice ?: return
-        if (!isComboMode) return
+        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
 
         executor.execute {
             try {
@@ -420,7 +435,7 @@ class HidMouseManager(private val context: Context) {
      * 将 ASCII 字符串转换为 HID 按键序列发送给平板（供 vivo 物理键盘拼音候选栏输入）
      */
     fun sendKeyboardText(text: String) {
-        if (!isComboMode) return
+        if (!isComboMode || currentProtocol != BluetoothHidDevice.PROTOCOL_REPORT_MODE) return
         for (c in text) {
             val mapping = charToKeycode(c)
             if (mapping != null) {

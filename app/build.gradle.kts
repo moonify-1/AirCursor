@@ -17,8 +17,8 @@ android {
         applicationId = "cn.moonify.aircursor"
         minSdk = 28
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         buildConfigField("String", "BUILD_TIME", "\"$buildTimeString\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

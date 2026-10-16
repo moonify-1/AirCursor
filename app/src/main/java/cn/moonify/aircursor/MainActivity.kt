@@ -316,11 +316,15 @@ class MainActivity : AppCompatActivity() {
         binding.switchComboMode.setOnCheckedChangeListener { _, isChecked ->
             hidMouseManager.switchMode(isChecked)
             updateStatusText()
-            Toast.makeText(
-                this,
-                if (isChecked) "已切换为【键盘+鼠标】复合模式 (适配vivo候选栏)" else "已切换为【纯鼠标】模式",
-                Toast.LENGTH_SHORT
-            ).show()
+            if (isChecked) {
+                AlertDialog.Builder(this)
+                    .setTitle("复合模式提示")
+                    .setMessage("已切换为【外接键盘+鼠标】复合模式。\n\n⚠️ 重要提示：\n由于平板系统会缓存蓝牙 HID 描述符，开启后强烈建议进入平板【蓝牙设置】，将手机【取消配对 / 忽略设备】后再重新配对连接！\n否则可能因平板使用旧描述符导致鼠标坐标轴错位或乱窜。")
+                    .setPositiveButton("知道了", null)
+                    .show()
+            } else {
+                Toast.makeText(this, "已切换为【纯鼠标】标准模式（最稳定，推荐）", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // Backspace button (dispatches both HID hardware key and RFCOMM command)
