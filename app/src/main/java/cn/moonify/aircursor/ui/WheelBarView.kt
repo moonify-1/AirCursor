@@ -24,6 +24,8 @@ class WheelBarView @JvmOverloads constructor(
 
     var callback: Callback? = null
     var sensitivity: Float = 0.2f
+    // 滚轮滑动方向：默认 true 为两指滑动方向（自然滚动，手指下滑为正向 wheel，与 TouchpadView 一致）；false 为反向传统滚轮
+    var isNaturalDirection: Boolean = true
 
     private var lastY = 0f
     private var wheelAccumulator = 0f
@@ -68,10 +70,12 @@ class WheelBarView @JvmOverloads constructor(
                 val dy = event.y - lastY
                 lastY = event.y
 
-                // Moving finger UP scrolls UP (positive wheel in HID mouse)
-                // Moving finger DOWN scrolls DOWN (negative wheel in HID mouse)
+                // 默认使用两指滑动方向 (isNaturalDirection = true):
+                // 手指上推 (dy < 0) 页面下滚 (negative wheel in HID mouse)
+                // 手指下滑 (dy > 0) 页面上滚 (positive wheel in HID mouse)
                 val scrollStep = (10f * resources.displayMetrics.density).coerceAtLeast(1f)
-                wheelAccumulator += (-dy / scrollStep) * sensitivity
+                val factor = if (isNaturalDirection) 1f else -1f
+                wheelAccumulator += (factor * dy / scrollStep) * sensitivity
                 val wheel = wheelAccumulator.toInt()
                 if (wheel != 0) {
                     wheelAccumulator -= wheel

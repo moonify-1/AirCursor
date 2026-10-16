@@ -515,6 +515,39 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
+     * 发送系统后台应用选择/多任务切换快捷指令 (Meta/Win + Tab)，回到平板后台多任务界面
+     */
+    fun sendRecentApps() {
+        if (!isComboMode) return
+        keyboardExecutor.execute {
+            val hid = hidDevice ?: return@execute
+            val device = connectedDevice ?: return@execute
+            try {
+                // 1. Meta (Win) 按下 (0x08 为 Left GUI / Win 键)
+                val metaDown = byteArrayOf(0x08.toByte(), 0, 0, 0, 0, 0, 0, 0)
+                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), metaDown)
+                Thread.sleep(15)
+
+                // 2. Meta + Tab 同时按下 (触发 Android PhoneWindowManager.toggleRecentApps)
+                val tabDown = byteArrayOf(0x08.toByte(), 0, KEY_TAB, 0, 0, 0, 0, 0)
+                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), tabDown)
+                Thread.sleep(35)
+
+                // 3. Tab 释放 (保持 Meta)
+                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), metaDown)
+                Thread.sleep(15)
+
+                // 4. 全部释放
+                val releaseAll = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), releaseAll)
+                Thread.sleep(15)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending recent apps shortcut", e)
+            }
+        }
+    }
+
+    /**
      * 将 ASCII 字符串转换为 HID 按键序列发送给平板（供 vivo 物理键盘拼音候选栏输入）
      */
     fun sendKeyboardText(text: String) {

@@ -236,6 +236,9 @@ class RemoteImeService : InputMethodService() {
             RfcommConstants.CMD_SPACE -> {
                 ic.commitText(" ", 1)
             }
+            RfcommConstants.CMD_RECENTS -> {
+                sendDownUpKeyEvents(KeyEvent.KEYCODE_APP_SWITCH)
+            }
             else -> {
                 // Direct UTF-8 Chinese characters commit
                 ic.commitText(text, 1)

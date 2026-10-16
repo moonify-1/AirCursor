@@ -18,4 +18,5 @@ object RfcommConstants {
     const val CMD_BACKSPACE = "__CMD_BACKSPACE__"
     const val CMD_ENTER = "__CMD_ENTER__"
     const val CMD_SPACE = "__CMD_SPACE__"
+    const val CMD_RECENTS = "__CMD_RECENTS__"
 }

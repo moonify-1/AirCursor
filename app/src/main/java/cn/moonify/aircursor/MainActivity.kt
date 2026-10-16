@@ -11,6 +11,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -56,6 +57,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_TOUCHPAD_SENS = "touchpad_sens"
         private const val KEY_WHEEL_SENS = "wheel_sens"
+        private const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
         private const val KEY_COMBO_MODE = "combo_mode"
 
         const val THEME_NIGHT = "night"
@@ -208,6 +210,15 @@ class MainActivity : AppCompatActivity() {
         binding.sbWheelSens.progress = (savedWheelSens * 10).toInt().coerceIn(1, 20)
         binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", savedWheelSens)
 
+        // Wheel direction setup (default: true for two-finger swipe direction)
+        val savedWheelNatural = prefs.getBoolean(KEY_WHEEL_DIRECTION, true)
+        binding.wheelBarView.isNaturalDirection = savedWheelNatural
+        if (savedWheelNatural) {
+            binding.rbWheelNatural.isChecked = true
+        } else {
+            binding.rbWheelInverted.isChecked = true
+        }
+
         // Show version and build time
         binding.tvAboutVersion.text = "AirCursor v${BuildConfig.VERSION_NAME} (构建时间: ${BuildConfig.BUILD_TIME})"
 
@@ -327,6 +338,10 @@ class MainActivity : AppCompatActivity() {
             override fun onWheel(wheel: Int) {
                 hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel)
             }
+
+            override fun onThreeFingerSwipeUp() {
+                handleThreeFingerSwipeUp()
+            }
         }
 
         // 48dp Scroll wheel
@@ -397,41 +412,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Backspace button (dispatches both HID hardware key and RFCOMM command)
-        binding.btnBackspace.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
-            rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+        // Wheel Direction (Natural vs Inverted)
+        binding.rgWheelDirection.setOnCheckedChangeListener { _, checkedId ->
+            val natural = (checkedId == R.id.rbWheelNatural)
+            binding.wheelBarView.isNaturalDirection = natural
+            prefs.edit().putBoolean(KEY_WHEEL_DIRECTION, natural).apply()
         }
 
-        // Space button
-        binding.btnSpace.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            val currentText = binding.etInput.text?.toString() ?: ""
-            if (currentText.isNotEmpty()) {
-                sendTextToTablet(currentText)
-                isInternalClearing = true
-                binding.etInput.text?.clear()
-                isInternalClearing = false
-            } else {
-                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_SPACE)
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_SPACE)
-            }
-        }
-
-        // Enter button
-        binding.btnEnter.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            val currentText = binding.etInput.text?.toString() ?: ""
-            if (currentText.isNotEmpty()) {
-                sendTextToTablet(currentText)
-                isInternalClearing = true
-                binding.etInput.text?.clear()
-                isInternalClearing = false
-            } else {
-                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
-            }
+        // Open Phone System Split-Screen Settings button
+        binding.btnOpenSplitSettings.setOnClickListener {
+            openSplitScreenSettings()
         }
 
         // 软键盘退格与回车拦截监听（解决手机软键盘在输入框为空时点击删除或回车无法转发至平板的问题）
@@ -698,7 +688,6 @@ class MainActivity : AppCompatActivity() {
 
         val activeDevice = connectionManager.getActiveDevice()
         val hidState = hidMouseManager.connectionState
-        val rfState = rfcommClientManager.connectionState
         val isAnyConnected = connectionManager.isConnected()
         val isAnyConnecting = connectionManager.isConnecting()
         val isReconnecting = connectionManager.isReconnecting
@@ -753,28 +742,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. RFCOMM Badge
-        when {
-            isReconnecting -> {
-                updateBadge(binding.tvBadgeRfcomm, "○ 串口重连中", R.color.accent_amber, R.color.accent_amber_bg)
-            }
-            rfState == RfcommClientManager.STATE_CONNECTED -> {
-                updateBadge(binding.tvBadgeRfcomm, "● 串口已连接", R.color.accent_green, R.color.accent_green_bg)
-            }
-            rfState == RfcommClientManager.STATE_CONNECTING -> {
-                updateBadge(binding.tvBadgeRfcomm, "○ 串口连接中", R.color.accent_amber, R.color.accent_amber_bg)
-            }
-            else -> {
-                val text = if (hidMouseManager.isComboMode && hidState == BluetoothProfile.STATE_CONNECTED) {
-                    "○ 串口免用(走HID)"
-                } else {
-                    "○ 串口未连接"
-                }
-                updateBadge(binding.tvBadgeRfcomm, text, R.color.badge_gray_text, R.color.badge_gray_bg)
-            }
-        }
-
-        // 4. Combo mode Badge
+        // 3. Combo mode Badge
         if (hidMouseManager.isComboMode) {
             updateBadge(binding.tvBadgeCombo, "⌨ 物理键盘开启", R.color.primary, R.color.tab_bg)
         } else {
@@ -817,6 +785,53 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("知道了", null)
             .show()
+    }
+
+    /**
+     * 处理三指上滑手势：回到平板后台应用选择界面 (Overview / Recent Tasks)
+     */
+    private fun handleThreeFingerSwipeUp() {
+        val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
+        val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+
+        if (hidConnected && hidMouseManager.isComboMode) {
+            hidMouseManager.sendRecentApps()
+            if (rfConnected) {
+                rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
+            }
+            Toast.makeText(this, "三指上滑：已触发平板后台任务界面", Toast.LENGTH_SHORT).show()
+        } else if (rfConnected) {
+            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
+            Toast.makeText(this, "三指上滑：已通过串口触发平板后台任务", Toast.LENGTH_SHORT).show()
+        } else if (hidConnected && !hidMouseManager.isComboMode) {
+            Toast.makeText(
+                this,
+                "三指上滑回到平板后台需在【功能设置】开启【外接键盘复合模式】",
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 打开手机系统分屏设置，方便用户彻底关闭系统全局的三指分屏手势
+     */
+    private fun openSplitScreenSettings() {
+        val targetIntents = listOf(
+            Intent().setClassName("com.vivo.upslide", "com.vivo.upslide.setting.SplitScreenSettingActivity"),
+            Intent("com.vivo.settings.SPLIT_SCREEN_SETTINGS"),
+            Intent("android.settings.SPLIT_SCREEN_SETTINGS"),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        for (intent in targetIntents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return
+            } catch (_: Exception) {}
+        }
+        Toast.makeText(this, "请前往手机【系统设置 -> 快捷与辅助 -> 分屏多任务】中关闭三指分屏", Toast.LENGTH_LONG).show()
     }
 
     override fun onDestroy() {

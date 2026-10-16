@@ -104,7 +104,7 @@
                     android:textSize="11sp" />
             </LinearLayout>
 
-            <!-- Row 2: Connection Badges (HID, RFCOMM, Combo Mode) -->
+            <!-- Row 2: Connection Badges (HID, Combo Mode) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -121,19 +121,6 @@
                     android:paddingHorizontal="8dp"
                     android:paddingVertical="3dp"
                     android:text="@string/prop_hid_disconnected"
-                    android:textColor="@color/badge_gray_text"
-                    android:textSize="10sp" />
-
-                <!-- RFCOMM Channel Badge -->
-                <TextView
-                    android:id="@+id/tvBadgeRfcomm"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:background="@drawable/bg_badge"
-                    android:paddingHorizontal="8dp"
-                    android:paddingVertical="3dp"
-                    android:text="@string/prop_rfcomm_disconnected"
                     android:textColor="@color/badge_gray_text"
                     android:textSize="10sp" />
 
@@ -238,50 +225,11 @@
             android:orientation="vertical"
             android:padding="8dp">
 
-            <!-- Keyboard Controls (Backspace, Space, Enter) -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btnBackspace"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:text="@string/btn_backspace"
-                    android:textColor="@color/text_primary"
-                    android:textSize="12sp" />
-
-                <Button
-                    android:id="@+id/btnSpace"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:text="@string/btn_space"
-                    android:textColor="@color/text_primary"
-                    android:textSize="12sp" />
-
-                <Button
-                    android:id="@+id/btnEnter"
-                    style="@style/Widget.Material3.Button"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:text="@string/btn_enter"
-                    android:textSize="12sp" />
-            </LinearLayout>
-
             <!-- EditText for Mobile Keyboard (Pinyin / Voice Input) -->
             <cn.moonify.aircursor.ui.RemoteEditText
                 android:id="@+id/etInput"
                 android:layout_width="match_parent"
                 android:layout_height="46dp"
-                android:layout_marginTop="8dp"
                 android:background="@drawable/bg_edittext"
                 android:hint="@string/input_hint"
                 android:imeOptions="actionDone|flagNoExtractUi"
@@ -562,9 +510,81 @@
                     android:layout_marginTop="4dp"
                     android:max="20"
                     android:progress="5" />
+
+                <!-- Wheel Direction Setting -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/wheel_direction_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <RadioGroup
+                    android:id="@+id/rgWheelDirection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/rbWheelNatural"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:text="@string/wheel_direction_natural"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbWheelInverted"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/wheel_direction_inverted"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </RadioGroup>
             </LinearLayout>
 
-            <!-- Section 5: About & Guide -->
+            <!-- Section 5: Gestures & Split-Screen Suppression -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings_section_gesture"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingExtra="3dp"
+                    android:text="• 三指上滑：在主控触控板上三指同时向上滑动，即可呼出平板后台多任务/应用选择界面（需开启【外接键盘复合模式】）。\n• 手机分屏屏蔽：AirCursor 已在全局底层禁用分屏模式，防止手机误触发三指上滑分屏。\n• 提示：若部分系统（如 vivo OriginOS）仍弹出系统级分屏拦截提示，可点击下方按钮前往手机设置彻底关闭【三指上滑分屏】。"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/btnOpenSplitSettings"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="10dp"
+                    android:text="前往手机系统分屏设置"
+                    android:textColor="@color/primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Section 6: About & Guide -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

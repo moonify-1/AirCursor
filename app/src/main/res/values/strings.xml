@@ -40,6 +40,7 @@
     <string name="settings_section_keyboard">⌨️ 键盘与输入模式</string>
     <string name="settings_section_theme">🎨 界面外观与主题</string>
     <string name="settings_section_sensitivity">🎛️ 触控与滚轮灵敏度</string>
+    <string name="settings_section_gesture">👆 三指手势与防分屏</string>
     <string name="settings_section_about">ℹ️ 关于与使用指引</string>
 
     <!-- Theme Modes -->
@@ -47,9 +48,12 @@
     <string name="theme_light">☀️ 白天模式</string>
     <string name="theme_system">📱 跟随系统</string>
 
-    <!-- Sensitivity -->
+    <!-- Sensitivity & Scroll Direction -->
     <string name="sensitivity_touchpad">触控板灵敏度: %s</string>
     <string name="sensitivity_wheel">滚轮滑动灵敏度: %s</string>
+    <string name="wheel_direction_title">滚轮滑动方向:</string>
+    <string name="wheel_direction_natural">两指滑动方向 (默认)</string>
+    <string name="wheel_direction_inverted">反向 (传统鼠标滚轮方向)</string>
 
     <!-- Background Service & Notification -->
     <string name="notification_channel_name">AirCursor 后台连接服务</string>

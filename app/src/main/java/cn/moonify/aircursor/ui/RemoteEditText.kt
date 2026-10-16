@@ -24,9 +24,18 @@ class RemoteEditText @JvmOverloads constructor(
     interface KeyEventListener {
         fun onEmptyBackspace()
         fun onEnterPressed()
+        fun onInputCancelled() {}
     }
 
     var keyEventListener: KeyEventListener? = null
+
+    override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+            clearFocus()
+            keyEventListener?.onInputCancelled()
+        }
+        return super.onKeyPreIme(keyCode, event)
+    }
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         val baseConnection = super.onCreateInputConnection(outAttrs) ?: return null
