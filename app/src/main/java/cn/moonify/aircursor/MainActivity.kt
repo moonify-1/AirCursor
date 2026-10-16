@@ -82,6 +82,7 @@ class MainActivity : AppCompatActivity() {
 
     private var isInternalClearing = false
     private var isInputModeActive = false
+    private var wasKeyboardVisible = false
 
     private val connectionListener = object : AirCursorConnectionManager.Listener {
         override fun onStateChanged() {
@@ -242,12 +243,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showSoftKeyboard() {
+        binding.etInput.requestFocus()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(binding.etInput, InputMethodManager.SHOW_IMPLICIT)
+    }
+
     private fun dismissInput() {
-        if (binding.etInput.isFocused) {
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
-            binding.etInput.clearFocus()
-        }
+        wasKeyboardVisible = false
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
+        binding.etInput.clearFocus()
         setInputModeActive(false)
     }
 
@@ -496,21 +502,34 @@ class MainActivity : AppCompatActivity() {
 
         // 输入栏焦点与点击监听：点击输入栏时隐藏上方目标平板和顶部鼠标触控导航栏，取消输入后再恢复
         binding.etInput.setOnFocusChangeListener { _, hasFocus ->
-            setInputModeActive(hasFocus)
+            if (hasFocus) {
+                if (!isInputModeActive) {
+                    binding.etInput.post { setInputModeActive(true) }
+                }
+                showSoftKeyboard()
+            }
         }
         binding.etInput.setOnClickListener {
-            setInputModeActive(true)
+            if (!isInputModeActive) {
+                binding.etInput.post { setInputModeActive(true) }
+            }
+            showSoftKeyboard()
         }
 
-        // 监听软键盘折叠/收起：当用户关闭软键盘时自动退出输入状态并恢复上方目标平板和鼠标触控栏
+        // 监听软键盘折叠/收起：当用户关闭软键盘时（且软键盘曾经处于展开状态），自动退出输入状态并恢复上方目标平板和鼠标触控栏
         val rootView = binding.root
         rootView.viewTreeObserver.addOnGlobalLayoutListener {
             val r = Rect()
             rootView.getWindowVisibleDisplayFrame(r)
             val screenHeight = rootView.rootView.height
+            if (screenHeight <= 0) return@addOnGlobalLayoutListener
             val keypadHeight = screenHeight - r.bottom
             val isKeyboardOpen = keypadHeight > screenHeight * 0.15
-            if (!isKeyboardOpen && isInputModeActive) {
+
+            if (isKeyboardOpen) {
+                wasKeyboardVisible = true
+            } else if (wasKeyboardVisible && isInputModeActive) {
+                // 仅当软键盘曾经弹起且现在已关闭时，才触发退出输入模式
                 dismissInput()
             }
         }
