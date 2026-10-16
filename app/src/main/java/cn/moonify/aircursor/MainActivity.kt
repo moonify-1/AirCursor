@@ -38,6 +38,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
 import cn.moonify.aircursor.bluetooth.HidMouseManager
 import cn.moonify.aircursor.bluetooth.PinyinConverter
@@ -59,10 +61,14 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_WHEEL_SENS = "wheel_sens"
         private const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
         private const val KEY_COMBO_MODE = "combo_mode"
+        private const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
 
         const val THEME_NIGHT = "night"
         const val THEME_LIGHT = "day"
         const val THEME_SYSTEM = "system"
+
+        const val SHORTCUT_ALT_TAB = "alt_tab"
+        const val SHORTCUT_WIN_TAB = "win_tab"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -138,6 +144,10 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 优先将多指手势交由应用处理，抑制系统瞬态栏手势冲突
+        WindowCompat.getInsetsController(window, window.decorView).systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
         connectionManager.init(applicationContext)
         connectionManager.addListener(connectionListener)
 
@@ -168,6 +178,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         Toast.makeText(this, "AirCursor v${BuildConfig.VERSION_NAME} (构建: ${BuildConfig.BUILD_TIME})", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.pointerCount >= 3) {
+            binding.root.requestDisallowInterceptTouchEvent(true)
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     private fun applyThemeMode(themeMode: String, persist: Boolean = true) {
@@ -219,6 +236,14 @@ class MainActivity : AppCompatActivity() {
             binding.rbWheelNatural.isChecked = true
         } else {
             binding.rbWheelInverted.isChecked = true
+        }
+
+        // Recents shortcut setup (default: Alt + Tab)
+        val savedShortcut = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) ?: SHORTCUT_ALT_TAB
+        if (savedShortcut == SHORTCUT_WIN_TAB) {
+            binding.rbShortcutWinTab.isChecked = true
+        } else {
+            binding.rbShortcutAltTab.isChecked = true
         }
 
         // Show version and build time
@@ -362,7 +387,7 @@ class MainActivity : AppCompatActivity() {
             showTabletGuideDialog()
         }
 
-        // Touchpad movements, tap and two-finger scroll
+        // Touchpad movements, tap, scroll, and 3-finger gestures
         binding.touchpadView.callback = object : cn.moonify.aircursor.ui.TouchpadView.Callback {
             override fun onMove(dx: Int, dy: Int) {
                 if (isInputModeActive) dismissInput()
@@ -386,7 +411,17 @@ class MainActivity : AppCompatActivity() {
 
             override fun onThreeFingerSwipeUp() {
                 if (isInputModeActive) dismissInput()
-                handleThreeFingerSwipeUp()
+                handleThreeFingerAction("三指上滑")
+            }
+
+            override fun onThreeFingerTap() {
+                if (isInputModeActive) dismissInput()
+                handleThreeFingerAction("三指轻点")
+            }
+
+            override fun onThreeFingerHorizontalSwipe() {
+                if (isInputModeActive) dismissInput()
+                handleThreeFingerAction("三指横滑")
             }
         }
 
@@ -471,6 +506,12 @@ class MainActivity : AppCompatActivity() {
         // Open Phone System Split-Screen Settings button
         binding.btnOpenSplitSettings.setOnClickListener {
             openSplitScreenSettings()
+        }
+
+        // Recents shortcut mode RadioGroup listener (Alt+Tab vs Win+Tab)
+        binding.rgRecentsShortcut.setOnCheckedChangeListener { _, checkedId ->
+            val shortcut = if (checkedId == R.id.rbShortcutWinTab) SHORTCUT_WIN_TAB else SHORTCUT_ALT_TAB
+            prefs.edit().putString(KEY_RECENTS_SHORTCUT, shortcut).apply()
         }
 
         // 软键盘退格与回车拦截监听（解决手机软键盘在输入框为空时点击删除或回车无法转发至平板的问题）
@@ -875,30 +916,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 处理三指上滑手势：回到平板后台应用选择界面 (Overview / Recent Tasks)
+     * 处理三指手势（三指轻点、三指上滑、三指横滑）：切换平板当前软件或回到平板后台多任务界面
      */
-    private fun handleThreeFingerSwipeUp() {
+    private fun handleThreeFingerAction(gestureName: String) {
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        val useAltTab = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) != SHORTCUT_WIN_TAB
 
         if (hidConnected && hidMouseManager.isComboMode) {
-            hidMouseManager.sendRecentApps()
+            hidMouseManager.sendRecentApps(useAltTab)
             if (rfConnected) {
                 rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
             }
-            Toast.makeText(this, "三指上滑：已触发平板后台任务界面", Toast.LENGTH_SHORT).show()
+            val shortcutDesc = if (useAltTab) "Alt + Tab" else "Win + Tab"
+            Toast.makeText(this, "$gestureName：已发送 $shortcutDesc 切换平板应用", Toast.LENGTH_SHORT).show()
         } else if (rfConnected) {
             rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-            Toast.makeText(this, "三指上滑：已通过串口触发平板后台任务", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "$gestureName：已通过串口触发平板后台", Toast.LENGTH_SHORT).show()
         } else if (hidConnected && !hidMouseManager.isComboMode) {
-            Toast.makeText(
-                this,
-                "三指上滑回到平板后台需在【功能设置】开启【外接键盘复合模式】",
-                Toast.LENGTH_LONG
-            ).show()
+            showEnableComboModeDialog(gestureName)
         } else {
             Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun showEnableComboModeDialog(gestureName: String) {
+        AlertDialog.Builder(this)
+            .setTitle("需开启外接键盘模式")
+            .setMessage(
+                "检测到已触发【$gestureName】，切换平板软件界面需要发送键盘快捷指令（Alt+Tab）。\n\n" +
+                "当前处于【纯鼠标模式】（仅发送鼠标报文，不包含键盘）。\n\n" +
+                "是否立即切换为【外接键盘+鼠标复合模式】？\n\n" +
+                "💡 提示：开启复合模式后，如平板鼠标坐标出现漂移，进入平板蓝牙设置将手机【取消配对】再重新连接一次即可恢复正常。"
+            )
+            .setPositiveButton("立即开启") { _, _ ->
+                binding.switchComboMode.isChecked = true
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /**

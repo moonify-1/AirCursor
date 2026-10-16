@@ -215,6 +215,11 @@ class RemoteImeService : InputMethodService() {
      * Dispatches commands or inserts UTF-8 characters to the currently focused input field.
      */
     private fun handleIncomingCommand(text: String) {
+        if (text == RfcommConstants.CMD_RECENTS) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_APP_SWITCH)
+            return
+        }
+
         val ic = currentInputConnection
         if (ic == null) {
             Log.w(TAG, "currentInputConnection is null, target app has no active focus")
@@ -235,9 +240,6 @@ class RemoteImeService : InputMethodService() {
             }
             RfcommConstants.CMD_SPACE -> {
                 ic.commitText(" ", 1)
-            }
-            RfcommConstants.CMD_RECENTS -> {
-                sendDownUpKeyEvents(KeyEvent.KEYCODE_APP_SWITCH)
             }
             else -> {
                 // Direct UTF-8 Chinese characters commit
