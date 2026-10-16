@@ -42,7 +42,8 @@ class HidMouseManager(private val context: Context) {
         const val CONSUMER_PLAY_PAUSE: Byte = 0x08
         const val CONSUMER_HOME: Byte = 0x10
         const val CONSUMER_BACK: Byte = 0x20
-        const val CONSUMER_NEXT: Byte = 0x40
+        const val CONSUMER_APP_SWITCH: Byte = 0x40
+        const val CONSUMER_NEXT: Byte = 0x40 // 兼容别名
         const val CONSUMER_PREV: Byte = 0x80.toByte()
 
         // 鼠标按键掩码 (Report ID 2)
@@ -147,7 +148,7 @@ class HidMouseManager(private val context: Context) {
             0x09.toByte(), 0xCD.toByte(), //   USAGE (Play/Pause)           -> Bit 3 (0x08)
             0x0A.toByte(), 0x23.toByte(), 0x02.toByte(), // USAGE (AC Home) -> Bit 4 (0x10)
             0x0A.toByte(), 0x24.toByte(), 0x02.toByte(), // USAGE (AC Back) -> Bit 5 (0x20)
-            0x09.toByte(), 0xB5.toByte(), //   USAGE (Scan Next Track)     -> Bit 6 (0x40)
+            0x0A.toByte(), 0xA2.toByte(), 0x01.toByte(), // USAGE (AL Select Task/App -> KEYCODE_APP_SWITCH) -> Bit 6 (0x40)
             0x09.toByte(), 0xB6.toByte(), //   USAGE (Scan Previous Track) -> Bit 7 (0x80)
             0x81.toByte(), 0x02.toByte(), //   INPUT (Data,Var,Abs)
             0xC0.toByte()                // END_COLLECTION
@@ -693,6 +694,45 @@ class HidMouseManager(private val context: Context) {
                 Log.d(TAG, "sendRecentApps: successfully sent shortcut (useAltTab=$useAltTab, reverse=$reverse)")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending recent apps shortcut", e)
+            }
+        }
+    }
+
+    /**
+     * 发送系统后台应用多任务概览指令，呼出平板后台并保持停留在多任务界面（供用户自主挑选应用）：
+     * 1. 优先通过 Consumer Control 发送原生 APP_SWITCH (Usage 0x01A2 -> Android KEYCODE_APP_SWITCH -> toggleRecentApps())；
+     * 2. 兼容兜底：若指定使用 Win/Meta + Tab 或未重新配对，使用对应组合键。
+     */
+    fun sendOverview(useWinTab: Boolean = false) {
+        if (!isKeyboardSupported) return
+        executor.execute {
+            val hid = hidDevice
+            val device = connectedDevice
+            if (hid == null || device == null) {
+                Log.w(TAG, "sendOverview: hidDevice=$hid, connectedDevice=$device, cannot send report")
+                return@execute
+            }
+            try {
+                if (useWinTab) {
+                    val modifier = 0x08.toByte() // Left GUI / Meta / Win
+                    val modDown = byteArrayOf(modifier, 0, 0, 0, 0, 0, 0, 0)
+                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
+                    Thread.sleep(30)
+                    val tabDown = byteArrayOf(modifier, 0, KEY_TAB, 0, 0, 0, 0, 0)
+                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), tabDown)
+                    Thread.sleep(80)
+                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
+                    Thread.sleep(30)
+                    val releaseAll = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), releaseAll)
+                } else {
+                    hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(CONSUMER_APP_SWITCH))
+                    Thread.sleep(35)
+                    hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(0))
+                }
+                Log.d(TAG, "sendOverview: successfully sent overview trigger (useWinTab=$useWinTab)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to sendOverview", e)
             }
         }
     }
