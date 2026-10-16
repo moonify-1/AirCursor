@@ -7,8 +7,11 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -23,10 +26,13 @@ import android.view.View
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
+import android.widget.SeekBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import cn.moonify.aircursor.bluetooth.HidMouseManager
 import cn.moonify.aircursor.bluetooth.RfcommClientManager
@@ -40,9 +46,18 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val PREFS_NAME = "aircursor_prefs"
+        private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_TOUCHPAD_SENS = "touchpad_sens"
+        private const val KEY_WHEEL_SENS = "wheel_sens"
+
+        const val THEME_NIGHT = "night"
+        const val THEME_LIGHT = "day"
+        const val THEME_SYSTEM = "system"
     }
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var prefs: SharedPreferences
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
@@ -69,6 +84,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedTheme = prefs.getString(KEY_THEME_MODE, THEME_NIGHT) ?: THEME_NIGHT
+        applyThemeMode(savedTheme, persist = false)
+
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -80,14 +99,126 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
     }
 
+    private fun applyThemeMode(themeMode: String, persist: Boolean = true) {
+        val targetNightMode = when (themeMode) {
+            THEME_LIGHT -> AppCompatDelegate.MODE_NIGHT_NO
+            THEME_SYSTEM -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+            else -> AppCompatDelegate.MODE_NIGHT_YES // Default is dark / night
+        }
+        if (persist) {
+            prefs.edit().putString(KEY_THEME_MODE, themeMode).apply()
+        }
+        if (AppCompatDelegate.getDefaultNightMode() != targetNightMode) {
+            AppCompatDelegate.setDefaultNightMode(targetNightMode)
+        }
+    }
+
     private fun setupUI() {
+        // Tab default: Mouse Tab active
+        switchTab(isMouseTab = true)
+
+        // Device Spinner setup
         spinnerAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, mutableListOf())
         spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         binding.spnDevices.adapter = spinnerAdapter
+
+        // Theme radio group setup
+        when (prefs.getString(KEY_THEME_MODE, THEME_NIGHT)) {
+            THEME_LIGHT -> binding.rbThemeLight.isChecked = true
+            THEME_SYSTEM -> binding.rbThemeSystem.isChecked = true
+            else -> binding.rbThemeDark.isChecked = true
+        }
+
+        // Sensitivity sliders setup
+        val savedTouchpadSens = prefs.getFloat(KEY_TOUCHPAD_SENS, 1.2f)
+        binding.touchpadView.sensitivity = savedTouchpadSens
+        binding.sbTouchpadSens.progress = (savedTouchpadSens * 10).toInt().coerceIn(5, 30)
+        binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", savedTouchpadSens)
+
+        val savedWheelSens = prefs.getFloat(KEY_WHEEL_SENS, 0.5f)
+        binding.wheelBarView.sensitivity = savedWheelSens
+        binding.touchpadView.scrollSensitivity = savedWheelSens
+        binding.sbWheelSens.progress = (savedWheelSens * 10).toInt().coerceIn(1, 20)
+        binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", savedWheelSens)
+
+        updateConnectionProperties()
+    }
+
+    private fun switchTab(isMouseTab: Boolean) {
+        if (isMouseTab) {
+            binding.layoutMouseContainer.visibility = View.VISIBLE
+            binding.layoutSettingsContainer.visibility = View.GONE
+
+            binding.btnTabMouse.setBackgroundResource(R.drawable.bg_tab_active)
+            binding.btnTabMouse.setTextColor(ContextCompat.getColor(this, R.color.primary))
+            binding.btnTabMouse.setTypeface(null, Typeface.BOLD)
+
+            binding.btnTabSettings.setBackgroundColor(Color.TRANSPARENT)
+            binding.btnTabSettings.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.btnTabSettings.setTypeface(null, Typeface.NORMAL)
+        } else {
+            binding.layoutMouseContainer.visibility = View.GONE
+            binding.layoutSettingsContainer.visibility = View.VISIBLE
+
+            binding.btnTabSettings.setBackgroundResource(R.drawable.bg_tab_active)
+            binding.btnTabSettings.setTextColor(ContextCompat.getColor(this, R.color.primary))
+            binding.btnTabSettings.setTypeface(null, Typeface.BOLD)
+
+            binding.btnTabMouse.setBackgroundColor(Color.TRANSPARENT)
+            binding.btnTabMouse.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.btnTabMouse.setTypeface(null, Typeface.NORMAL)
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupListeners() {
+        // Tab switcher clicks
+        binding.btnTabMouse.setOnClickListener { switchTab(true) }
+        binding.btnTabSettings.setOnClickListener { switchTab(false) }
+
+        // Top Status Card click on Mouse screen navigates to Settings
+        binding.cardConnectionProps.setOnClickListener {
+            switchTab(false)
+        }
+
+        // Theme Mode RadioGroup listener
+        binding.rgThemeMode.setOnCheckedChangeListener { _, checkedId ->
+            val newMode = when (checkedId) {
+                R.id.rbThemeLight -> THEME_LIGHT
+                R.id.rbThemeSystem -> THEME_SYSTEM
+                else -> THEME_NIGHT
+            }
+            applyThemeMode(newMode, persist = true)
+        }
+
+        // Sensitivity sliders listeners
+        binding.sbTouchpadSens.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val sens = (progress.coerceAtLeast(5)) / 10f
+                binding.touchpadView.sensitivity = sens
+                binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", sens)
+                if (fromUser) {
+                    prefs.edit().putFloat(KEY_TOUCHPAD_SENS, sens).apply()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        binding.sbWheelSens.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val sens = (progress.coerceAtLeast(1)) / 10f
+                binding.wheelBarView.sensitivity = sens
+                binding.touchpadView.scrollSensitivity = sens
+                binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", sens)
+                if (fromUser) {
+                    prefs.edit().putFloat(KEY_WHEEL_SENS, sens).apply()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
         // Refresh paired devices list
         binding.btnRefresh.setOnClickListener {
             refreshPairedDevices()
@@ -379,6 +510,80 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.tvStatus.setTextColor(Color.parseColor("#EF4444")) // Red
         }
+
+        updateConnectionProperties()
+    }
+
+    /**
+     * 更新鼠标主界面的紧凑连接属性卡片
+     */
+    private fun updateConnectionProperties() {
+        val activeDevice = hidMouseManager.connectedDevice ?: rfcommClientManager.connectedDevice
+        val hidState = hidMouseManager.connectionState
+        val rfState = rfcommClientManager.connectionState
+        val isAnyConnected = hidState == BluetoothProfile.STATE_CONNECTED || rfState == RfcommClientManager.STATE_CONNECTED
+        val isAnyConnecting = hidState == BluetoothProfile.STATE_CONNECTING || rfState == RfcommClientManager.STATE_CONNECTING
+
+        // 1. Device name and action button
+        if (activeDevice != null && isAnyConnected) {
+            val name = activeDevice.name ?: "平板设备"
+            binding.tvPropDevice.text = "$name (${activeDevice.address})"
+            binding.btnPropAction.text = getString(R.string.prop_btn_disconnect)
+            binding.btnPropAction.setOnClickListener { disconnectAll() }
+        } else if (isAnyConnecting) {
+            binding.tvPropDevice.text = "正在连接平板..."
+            binding.btnPropAction.text = getString(R.string.prop_btn_settings)
+            binding.btnPropAction.setOnClickListener { switchTab(false) }
+        } else {
+            binding.tvPropDevice.text = getString(R.string.prop_device_none)
+            binding.btnPropAction.text = "去连接"
+            binding.btnPropAction.setOnClickListener { switchTab(false) }
+        }
+
+        // 2. HID Badge
+        when (hidState) {
+            BluetoothProfile.STATE_CONNECTED -> {
+                updateBadge(binding.tvBadgeHid, "● HID已连接", R.color.accent_green, R.color.accent_green_bg)
+            }
+            BluetoothProfile.STATE_CONNECTING -> {
+                updateBadge(binding.tvBadgeHid, "○ HID连接中", R.color.accent_amber, R.color.accent_amber_bg)
+            }
+            else -> {
+                val text = if (hidMouseManager.isAppRegistered) "○ HID就绪" else "○ HID未就绪"
+                updateBadge(binding.tvBadgeHid, text, R.color.badge_gray_text, R.color.badge_gray_bg)
+            }
+        }
+
+        // 3. RFCOMM Badge
+        when (rfState) {
+            RfcommClientManager.STATE_CONNECTED -> {
+                updateBadge(binding.tvBadgeRfcomm, "● 串口已连接", R.color.accent_green, R.color.accent_green_bg)
+            }
+            RfcommClientManager.STATE_CONNECTING -> {
+                updateBadge(binding.tvBadgeRfcomm, "○ 串口连接中", R.color.accent_amber, R.color.accent_amber_bg)
+            }
+            else -> {
+                updateBadge(binding.tvBadgeRfcomm, "○ 串口未连接", R.color.badge_gray_text, R.color.badge_gray_bg)
+            }
+        }
+
+        // 4. Combo mode Badge
+        if (hidMouseManager.isComboMode) {
+            updateBadge(binding.tvBadgeCombo, "⌨ 物理键盘开启", R.color.primary, R.color.tab_bg)
+        } else {
+            updateBadge(binding.tvBadgeCombo, "🖱 纯鼠标模式", R.color.badge_gray_text, R.color.badge_gray_bg)
+        }
+    }
+
+    private fun updateBadge(
+        badge: TextView,
+        text: String,
+        textColorRes: Int,
+        bgTintRes: Int
+    ) {
+        badge.text = text
+        badge.setTextColor(ContextCompat.getColor(this, textColorRes))
+        badge.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, bgTintRes))
     }
 
     private fun showTabletGuideDialog() {
@@ -405,7 +610,7 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("知道了", null)
             .show()
-    }
+        }
 
     override fun onDestroy() {
         super.onDestroy()

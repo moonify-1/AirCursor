@@ -19,4 +19,35 @@
     <string name="tablet_ime_title">平板接收端设置 (作为平板时使用)</string>
     <string name="enable_ime_btn">1. 系统设置启用输入法</string>
     <string name="select_ime_btn">2. 切换当前输入法为 AirCursor</string>
+
+    <!-- Navigation Tabs -->
+    <string name="tab_mouse">🖱️ 鼠标触控</string>
+    <string name="tab_settings">⚙️ 功能设置</string>
+
+    <!-- Connection Properties on Mouse Screen -->
+    <string name="prop_device_none">未连接平板设备</string>
+    <string name="prop_btn_settings">设置</string>
+    <string name="prop_btn_disconnect">断开</string>
+    <string name="prop_hid_connected">HID鼠标: 已连接</string>
+    <string name="prop_hid_disconnected">HID鼠标: 未连接</string>
+    <string name="prop_rfcomm_connected">键盘串口: 已连接</string>
+    <string name="prop_rfcomm_disconnected">键盘串口: 未连接</string>
+    <string name="prop_combo_on">物理键盘: 开启</string>
+    <string name="prop_combo_off">物理键盘: 关闭</string>
+
+    <!-- Settings Screen Sections -->
+    <string name="settings_section_device">📱 平板设备与蓝牙连接</string>
+    <string name="settings_section_keyboard">⌨️ 键盘与输入模式</string>
+    <string name="settings_section_theme">🎨 界面外观与主题</string>
+    <string name="settings_section_sensitivity">🎛️ 触控与滚轮灵敏度</string>
+    <string name="settings_section_about">ℹ️ 关于与使用指引</string>
+
+    <!-- Theme Modes -->
+    <string name="theme_dark">🌙 黑夜模式 (默认)</string>
+    <string name="theme_light">☀️ 白天模式</string>
+    <string name="theme_system">📱 跟随系统</string>
+
+    <!-- Sensitivity -->
+    <string name="sensitivity_touchpad">触控板灵敏度: %s</string>
+    <string name="sensitivity_wheel">滚轮滑动灵敏度: %s</string>
 </resources>

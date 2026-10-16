@@ -29,7 +29,7 @@ class WheelBarView @JvmOverloads constructor(
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     init {
-        setBackgroundColor(Color.parseColor("#1E222B"))
+        setBackgroundColor(androidx.core.content.ContextCompat.getColor(context, cn.moonify.aircursor.R.color.wheel_bg))
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -38,12 +38,12 @@ class WheelBarView @JvmOverloads constructor(
         val h = height.toFloat()
 
         // Draw central track line
-        paint.color = Color.parseColor("#3A4050")
+        paint.color = androidx.core.content.ContextCompat.getColor(context, cn.moonify.aircursor.R.color.wheel_track)
         paint.strokeWidth = 3f * resources.displayMetrics.density
         canvas.drawLine(w / 2f, h * 0.1f, w / 2f, h * 0.9f, paint)
 
         // Draw small horizontal notches
-        paint.color = Color.parseColor("#60687A")
+        paint.color = androidx.core.content.ContextCompat.getColor(context, cn.moonify.aircursor.R.color.wheel_notch)
         paint.strokeWidth = 2f * resources.displayMetrics.density
         val notchSpacing = 28f * resources.displayMetrics.density
         var y = h * 0.2f
