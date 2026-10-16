@@ -1,0 +1,138 @@
+package cn.moonify.aircursor.bluetooth
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothSocket
+import android.util.Log
+import java.io.DataOutputStream
+import java.io.IOException
+import java.util.concurrent.Executors
+
+/**
+ * Manages the client-side RFCOMM SPP Bluetooth socket connection to the tablet.
+ * Sends UTF-8 Chinese strings and special control commands using DataOutputStream.writeUTF().
+ */
+class RfcommClientManager {
+
+    companion object {
+        private const val TAG = "RfcommClientManager"
+
+        const val STATE_DISCONNECTED = 0
+        const val STATE_CONNECTING = 1
+        const val STATE_CONNECTED = 2
+    }
+
+    interface Listener {
+        fun onConnectionStateChanged(state: Int, device: BluetoothDevice?)
+        fun onError(message: String)
+    }
+
+    var listener: Listener? = null
+
+    private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+    private val sendExecutor = Executors.newSingleThreadExecutor()
+    private val connectExecutor = Executors.newSingleThreadExecutor()
+
+    @Volatile
+    private var socket: BluetoothSocket? = null
+
+    @Volatile
+    private var dataOutputStream: DataOutputStream? = null
+
+    @Volatile
+    var connectedDevice: BluetoothDevice? = null
+        private set
+
+    @Volatile
+    var connectionState: Int = STATE_DISCONNECTED
+        private set
+
+    @SuppressLint("MissingPermission")
+    fun connect(device: BluetoothDevice) {
+        if (connectionState == STATE_CONNECTING || connectionState == STATE_CONNECTED) {
+            if (connectedDevice?.address == device.address && socket?.isConnected == true) {
+                Log.d(TAG, "Already connected to ${device.address}")
+                return
+            }
+            disconnect()
+        }
+
+        updateState(STATE_CONNECTING, device)
+
+        connectExecutor.execute {
+            try {
+                bluetoothAdapter?.cancelDiscovery()
+                Log.d(TAG, "Creating RFCOMM socket to ${device.address}")
+                val s = device.createRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
+                s.connect()
+
+                socket = s
+                dataOutputStream = DataOutputStream(s.outputStream)
+                connectedDevice = device
+                updateState(STATE_CONNECTED, device)
+                Log.d(TAG, "RFCOMM connected successfully to ${device.address}")
+            } catch (e: Exception) {
+                Log.e(TAG, "RFCOMM connection failed to ${device.address}", e)
+                closeInternal()
+                updateState(STATE_DISCONNECTED, null)
+                listener?.onError("RFCOMM 连接失败: ${e.message}")
+            }
+        }
+    }
+
+    fun sendText(text: String) {
+        val dos = dataOutputStream
+        if (connectionState != STATE_CONNECTED || dos == null) {
+            Log.w(TAG, "Cannot send text, RFCOMM not connected")
+            return
+        }
+
+        sendExecutor.execute {
+            try {
+                dos.writeUTF(text)
+                dos.flush()
+                Log.d(TAG, "Sent text via RFCOMM: $text")
+            } catch (e: IOException) {
+                Log.e(TAG, "Failed to send text, socket might be disconnected", e)
+                disconnect()
+                listener?.onError("发送失败，连接已断开: ${e.message}")
+            }
+        }
+    }
+
+    fun sendCommand(command: String) {
+        sendText(command)
+    }
+
+    fun disconnect() {
+        connectExecutor.execute {
+            closeInternal()
+            updateState(STATE_DISCONNECTED, null)
+        }
+    }
+
+    private fun closeInternal() {
+        try {
+            dataOutputStream?.close()
+        } catch (_: Exception) {}
+        try {
+            socket?.close()
+        } catch (_: Exception) {}
+
+        dataOutputStream = null
+        socket = null
+        connectedDevice = null
+    }
+
+    private fun updateState(newState: Int, device: BluetoothDevice?) {
+        connectionState = newState
+        listener?.onConnectionStateChanged(newState, device)
+    }
+
+    fun release() {
+        disconnect()
+        sendExecutor.shutdown()
+        connectExecutor.shutdown()
+    }
+}

@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">AirCursor</string>
+    <string name="ime_name">AirCursor 无界面输入法</string>
+    <string name="subtype_chinese">中文 (UTF-8)</string>
+    <string name="connect">连接平板 (HID+RFCOMM)</string>
+    <string name="disconnect">断开连接</string>
+    <string name="status_disconnected">状态: 未连接</string>
+    <string name="status_connecting">状态: 正在连接…</string>
+    <string name="status_connected">状态: 已连接平板</string>
+    <string name="status_registered">HID: 已注册</string>
+    <string name="refresh_devices">刷新设备</string>
+    <string name="left_btn">左 键</string>
+    <string name="right_btn">右 键</string>
+    <string name="scroll_bar">滚轮</string>
+    <string name="input_hint">在此输入中文或语音输入，上屏后自动发送…</string>
+    <string name="btn_backspace">退格</string>
+    <string name="btn_space">空格</string>
+    <string name="btn_enter">回车</string>
+    <string name="tablet_ime_title">平板接收端设置 (作为平板时使用)</string>
+    <string name="enable_ime_btn">1. 系统设置启用输入法</string>
+    <string name="select_ime_btn">2. 切换当前输入法为 AirCursor</string>
+</resources>
