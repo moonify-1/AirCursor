@@ -582,12 +582,14 @@
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/tvAboutVersion"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="AirCursor v1.0 (蓝牙触控板与中文输入控制端)"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
+                    android:text="AirCursor v1.1"
+                    android:textColor="@color/accent_green"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:layout_width="wrap_content"

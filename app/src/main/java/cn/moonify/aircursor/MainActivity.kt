@@ -97,6 +97,8 @@ class MainActivity : AppCompatActivity() {
         setupUI()
         setupListeners()
         checkAndRequestPermissions()
+
+        Toast.makeText(this, "AirCursor v${BuildConfig.VERSION_NAME} (构建: ${BuildConfig.BUILD_TIME})", Toast.LENGTH_SHORT).show()
     }
 
     private fun applyThemeMode(themeMode: String, persist: Boolean = true) {
@@ -140,6 +142,9 @@ class MainActivity : AppCompatActivity() {
         binding.touchpadView.scrollSensitivity = savedWheelSens
         binding.sbWheelSens.progress = (savedWheelSens * 10).toInt().coerceIn(1, 20)
         binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", savedWheelSens)
+
+        // Show version and build time
+        binding.tvAboutVersion.text = "AirCursor v${BuildConfig.VERSION_NAME} (构建时间: ${BuildConfig.BUILD_TIME})"
 
         updateConnectionProperties()
     }
