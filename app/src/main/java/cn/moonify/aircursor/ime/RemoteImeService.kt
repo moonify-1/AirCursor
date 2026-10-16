@@ -4,13 +4,18 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.graphics.Color
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
 import cn.moonify.aircursor.bluetooth.RfcommConstants
 import java.io.DataInputStream
 import java.io.IOException
@@ -19,6 +24,10 @@ import java.io.IOException
  * Tablet Receiver: Zero-height, invisible InputMethodService.
  * Listens for RFCOMM SPP connections from the phone and commits incoming UTF-8 text/commands
  * directly into the focused input field without showing any on-screen keyboard.
+ *
+ * 关键修复：
+ * 1. onEvaluateInputViewShown() 必须返回 true，确保系统 TextView / EditText 正常激活输入生命周期并显示闪烁插入光标与游标指示器。
+ * 2. onCreateInputView() 返回高度为 1px 的透明占位视图，禁止设为 GONE，配合 onConfigureWindow 确保零像素遮挡屏幕。
  */
 class RemoteImeService : InputMethodService() {
 
@@ -42,13 +51,43 @@ class RemoteImeService : InputMethodService() {
 
     override fun onEvaluateFullscreenMode(): Boolean = false
 
-    override fun onEvaluateInputViewShown(): Boolean = false
+    /**
+     * 关键修复点：
+     * 必须返回 true！告知 Android 框架层当前有输入法视图处于活动展示状态。
+     * 只有这样，EditText / TextView 才会正常显示文本插入光标（Cursor）、开启光标闪烁动画并展示水滴选择指示器。
+     */
+    override fun onEvaluateInputViewShown(): Boolean = true
 
+    /**
+     * 创建一个透明且仅有 1 像素高（或 0 尺寸）的占位视图。
+     * 注意：切勿设置为 View.GONE，否则 WindowManager 会跳过窗口分配导致光标位置与焦点丢失。
+     */
     override fun onCreateInputView(): View {
-        return View(this).apply {
-            layoutParams = ViewGroup.LayoutParams(0, 0)
-            visibility = View.GONE
+        return FrameLayout(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1
+            )
+            setBackgroundColor(Color.TRANSPARENT)
+            visibility = View.VISIBLE
         }
+    }
+
+    override fun onConfigureWindow(win: Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        // 将 IME 窗口高度压缩至最低并固定在屏幕底部，确保完全不遮挡平板上的任何界面
+        win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+        win.setGravity(Gravity.BOTTOM)
+    }
+
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        Log.d(TAG, "onStartInput: inputType=${attribute?.inputType}, restarting=$restarting")
+    }
+
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        Log.d(TAG, "onStartInputView: input session started, cursor active")
     }
 
     override fun onCreate() {
@@ -109,7 +148,6 @@ class RemoteImeService : InputMethodService() {
                     serverSocket = null
                 }
 
-                // If still running after loop termination (e.g., unexpected error), wait briefly and retry
                 if (isRunning) {
                     try {
                         Thread.sleep(1000)
@@ -164,10 +202,8 @@ class RemoteImeService : InputMethodService() {
             RfcommConstants.CMD_BACKSPACE -> {
                 val selected = ic.getSelectedText(0)
                 if (!selected.isNullOrEmpty()) {
-                    // Replace selected text with empty string
                     ic.commitText("", 1)
                 } else {
-                    // Delete 1 character before cursor
                     ic.deleteSurroundingText(1, 0)
                 }
             }
@@ -178,7 +214,7 @@ class RemoteImeService : InputMethodService() {
                 ic.commitText(" ", 1)
             }
             else -> {
-                // Direct UTF-8 Chinese characters / text commit
+                // Direct UTF-8 Chinese characters commit
                 ic.commitText(text, 1)
             }
         }

@@ -11,22 +11,66 @@ import android.util.Log
 import java.util.concurrent.Executors
 
 /**
- * Manages Bluetooth HID Boot Mouse registration, connection, and report dispatch.
- * Conforms strictly to 4-byte standard Boot Mouse HID descriptor (no Report ID, reportId = 0).
+ * Manages Bluetooth HID registration, connection, and report dispatch.
+ * 支持两种模式：
+ * 1. 外接键盘 + 鼠标复合模式 (Combo Mode，默认推荐)：
+ *    - 向平板注册为 SUBCLASS1_COMBO，系统识别为实体外接物理键盘与鼠标。
+ *    - 平板保留默认 vivo 输入法时，点击输入栏不会弹出软键盘，而是自动唤起 vivo 物理键盘专属候选栏与悬浮输入条，光标正常显示与闪烁！
+ * 2. 纯标准鼠标模式 (Pure Boot Mouse Mode)：
+ *    - 仅注册为 SUBCLASS1_MOUSE（4 字节标准鼠标报文，无 Report ID）。
  */
 class HidMouseManager(private val context: Context) {
 
     companion object {
         private const val TAG = "HidMouseManager"
 
-        // Standard 4-byte relative Boot Mouse HID Descriptor (No Report ID)
-        val MOUSE_REPORT_DESCRIPTOR = byteArrayOf(
+        const val REPORT_ID_KEYBOARD: Byte = 1
+        const val REPORT_ID_MOUSE: Byte = 2
+
+        // ==================== 1. 标准复合设备描述符 (键盘 + 鼠标) ====================
+        val COMBO_REPORT_DESCRIPTOR = byteArrayOf(
+            // ---------- 键盘 (Report ID 1, 8 字节标准报文) ----------
+            0x05.toByte(), 0x01.toByte(), // USAGE_PAGE (Generic Desktop)
+            0x09.toByte(), 0x06.toByte(), // USAGE (Keyboard)
+            0xA1.toByte(), 0x01.toByte(), // COLLECTION (Application)
+            0x85.toByte(), 0x01.toByte(), //   REPORT_ID (1)
+            0x05.toByte(), 0x07.toByte(), //   USAGE_PAGE (Keyboard/Keypad)
+            0x19.toByte(), 0xE0.toByte(), //   USAGE_MINIMUM (Left Control)
+            0x29.toByte(), 0xE7.toByte(), //   USAGE_MAXIMUM (Right GUI)
+            0x15.toByte(), 0x00.toByte(), //   LOGICAL_MINIMUM (0)
+            0x25.toByte(), 0x01.toByte(), //   LOGICAL_MAXIMUM (1)
+            0x75.toByte(), 0x01.toByte(), //   REPORT_SIZE (1)
+            0x95.toByte(), 0x08.toByte(), //   REPORT_COUNT (8)
+            0x81.toByte(), 0x02.toByte(), //   INPUT (Data,Var,Abs) - Modifier 按键掩码
+            0x95.toByte(), 0x01.toByte(), //   REPORT_COUNT (1)
+            0x75.toByte(), 0x08.toByte(), //   REPORT_SIZE (8)
+            0x81.toByte(), 0x01.toByte(), //   INPUT (Cnst,Ary,Abs) - 保留字节
+            0x95.toByte(), 0x05.toByte(), //   REPORT_COUNT (5)
+            0x75.toByte(), 0x01.toByte(), //   REPORT_SIZE (1)
+            0x05.toByte(), 0x08.toByte(), //   USAGE_PAGE (LEDs)
+            0x19.toByte(), 0x01.toByte(), //   USAGE_MINIMUM (Num Lock)
+            0x29.toByte(), 0x05.toByte(), //   USAGE_MAXIMUM (Kana)
+            0x91.toByte(), 0x02.toByte(), //   OUTPUT (Data,Var,Abs) - LED 状态
+            0x95.toByte(), 0x01.toByte(), //   REPORT_COUNT (1)
+            0x75.toByte(), 0x03.toByte(), //   REPORT_SIZE (3)
+            0x91.toByte(), 0x01.toByte(), //   OUTPUT (Cnst,Ary,Abs) - LED 补齐位
+            0x95.toByte(), 0x06.toByte(), //   REPORT_COUNT (6)
+            0x75.toByte(), 0x08.toByte(), //   REPORT_SIZE (8)
+            0x15.toByte(), 0x00.toByte(), //   LOGICAL_MINIMUM (0)
+            0x25.toByte(), 0x65.toByte(), //   LOGICAL_MAXIMUM (101)
+            0x05.toByte(), 0x07.toByte(), //   USAGE_PAGE (Keyboard/Keypad)
+            0x19.toByte(), 0x00.toByte(), //   USAGE_MINIMUM (0)
+            0x29.toByte(), 0x65.toByte(), //   USAGE_MAXIMUM (101)
+            0x81.toByte(), 0x00.toByte(), //   INPUT (Data,Ary,Abs) - 6 个并发按键码
+            0xC0.toByte(),               // END_COLLECTION
+
+            // ---------- 鼠标 (Report ID 2, 4 字节标准相对报文) ----------
             0x05.toByte(), 0x01.toByte(), // USAGE_PAGE (Generic Desktop)
             0x09.toByte(), 0x02.toByte(), // USAGE (Mouse)
             0xA1.toByte(), 0x01.toByte(), // COLLECTION (Application)
+            0x85.toByte(), 0x02.toByte(), //   REPORT_ID (2)
             0x09.toByte(), 0x01.toByte(), //   USAGE (Pointer)
             0xA1.toByte(), 0x00.toByte(), //   COLLECTION (Physical)
-            // Byte 0: 3 Buttons (Left, Right, Middle)
             0x05.toByte(), 0x09.toByte(), //     USAGE_PAGE (Button)
             0x19.toByte(), 0x01.toByte(), //     USAGE_MINIMUM (Button 1)
             0x29.toByte(), 0x03.toByte(), //     USAGE_MAXIMUM (Button 3)
@@ -35,11 +79,9 @@ class HidMouseManager(private val context: Context) {
             0x95.toByte(), 0x03.toByte(), //     REPORT_COUNT (3)
             0x75.toByte(), 0x01.toByte(), //     REPORT_SIZE (1)
             0x81.toByte(), 0x02.toByte(), //     INPUT (Data,Var,Abs)
-            // Byte 0: 5-bit padding
             0x95.toByte(), 0x01.toByte(), //     REPORT_COUNT (1)
             0x75.toByte(), 0x05.toByte(), //     REPORT_SIZE (5)
             0x81.toByte(), 0x03.toByte(), //     INPUT (Cnst,Var,Abs)
-            // Byte 1 & 2: X, Y relative movement (-127 to 127)
             0x05.toByte(), 0x01.toByte(), //     USAGE_PAGE (Generic Desktop)
             0x09.toByte(), 0x30.toByte(), //     USAGE (X)
             0x09.toByte(), 0x31.toByte(), //     USAGE (Y)
@@ -48,7 +90,6 @@ class HidMouseManager(private val context: Context) {
             0x75.toByte(), 0x08.toByte(), //     REPORT_SIZE (8)
             0x95.toByte(), 0x02.toByte(), //     REPORT_COUNT (2)
             0x81.toByte(), 0x06.toByte(), //     INPUT (Data,Var,Rel)
-            // Byte 3: Vertical Scroll Wheel (-127 to 127)
             0x09.toByte(), 0x38.toByte(), //     USAGE (Wheel)
             0x15.toByte(), 0x81.toByte(), //     LOGICAL_MINIMUM (-127)
             0x25.toByte(), 0x7F.toByte(), //     LOGICAL_MAXIMUM (127)
@@ -59,10 +100,53 @@ class HidMouseManager(private val context: Context) {
             0xC0.toByte()                // END_COLLECTION
         )
 
+        // ==================== 2. 纯 Boot Mouse 描述符 (无 Report ID) ====================
+        val PURE_MOUSE_REPORT_DESCRIPTOR = byteArrayOf(
+            0x05.toByte(), 0x01.toByte(),
+            0x09.toByte(), 0x02.toByte(),
+            0xA1.toByte(), 0x01.toByte(),
+            0x09.toByte(), 0x01.toByte(),
+            0xA1.toByte(), 0x00.toByte(),
+            0x05.toByte(), 0x09.toByte(),
+            0x19.toByte(), 0x01.toByte(),
+            0x29.toByte(), 0x03.toByte(),
+            0x15.toByte(), 0x00.toByte(),
+            0x25.toByte(), 0x01.toByte(),
+            0x95.toByte(), 0x03.toByte(),
+            0x75.toByte(), 0x01.toByte(),
+            0x81.toByte(), 0x02.toByte(),
+            0x95.toByte(), 0x01.toByte(),
+            0x75.toByte(), 0x05.toByte(),
+            0x81.toByte(), 0x03.toByte(),
+            0x05.toByte(), 0x01.toByte(),
+            0x09.toByte(), 0x30.toByte(),
+            0x09.toByte(), 0x31.toByte(),
+            0x15.toByte(), 0x81.toByte(),
+            0x25.toByte(), 0x7F.toByte(),
+            0x75.toByte(), 0x08.toByte(),
+            0x95.toByte(), 0x02.toByte(),
+            0x81.toByte(), 0x06.toByte(),
+            0x09.toByte(), 0x38.toByte(),
+            0x15.toByte(), 0x81.toByte(),
+            0x25.toByte(), 0x7F.toByte(),
+            0x75.toByte(), 0x08.toByte(),
+            0x95.toByte(), 0x01.toByte(),
+            0x81.toByte(), 0x06.toByte(),
+            0xC0.toByte(),
+            0xC0.toByte()
+        )
+
         const val BUTTON_NONE: Byte = 0x00
         const val BUTTON_LEFT: Byte = 0x01
         const val BUTTON_RIGHT: Byte = 0x02
         const val BUTTON_MIDDLE: Byte = 0x04
+
+        // 常用 HID 按键码 (Usage Page 0x07)
+        const val KEY_ENTER: Byte = 0x28
+        const val KEY_ESCAPE: Byte = 0x29
+        const val KEY_BACKSPACE: Byte = 0x2A
+        const val KEY_TAB: Byte = 0x2B
+        const val KEY_SPACE: Byte = 0x2C
     }
 
     interface Listener {
@@ -72,6 +156,9 @@ class HidMouseManager(private val context: Context) {
     }
 
     var listener: Listener? = null
+
+    // 默认启用 Combo 模式（外接键盘+鼠标），完美兼容 vivo 等平板的悬浮候选栏与物理键盘免遮挡模式
+    var isComboMode: Boolean = true
 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var hidDevice: BluetoothHidDevice? = null
@@ -124,8 +211,22 @@ class HidMouseManager(private val context: Context) {
         override fun onGetReport(device: BluetoothDevice?, type: Byte, id: Byte, bufferSize: Int) {
             super.onGetReport(device, type, id, bufferSize)
             Log.d(TAG, "onGetReport: type=$type, id=$id")
-            if (type == BluetoothHidDevice.REPORT_TYPE_INPUT && id == 0.toByte()) {
-                hidDevice?.replyReport(device, type, id, byteArrayOf(0, 0, 0, 0))
+            if (type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
+                if (isComboMode) {
+                    if (id == REPORT_ID_KEYBOARD) {
+                        hidDevice?.replyReport(device, type, id, ByteArray(8))
+                    } else if (id == REPORT_ID_MOUSE) {
+                        hidDevice?.replyReport(device, type, id, ByteArray(4))
+                    } else {
+                        hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_UNSUPPORTED_REQ)
+                    }
+                } else {
+                    if (id == 0.toByte()) {
+                        hidDevice?.replyReport(device, type, id, ByteArray(4))
+                    } else {
+                        hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_UNSUPPORTED_REQ)
+                    }
+                }
             } else {
                 hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_UNSUPPORTED_REQ)
             }
@@ -177,9 +278,6 @@ class HidMouseManager(private val context: Context) {
         }
     }
 
-    /**
-     * Initializes the Bluetooth HID Device proxy.
-     */
     fun init() {
         if (bluetoothAdapter == null) {
             Log.e(TAG, "BluetoothAdapter is null, device does not support Bluetooth")
@@ -189,32 +287,54 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
-     * Registers the HID Boot Mouse application with Android Bluetooth subsystem.
+     * 根据当前 isComboMode 模式注册 SDP 记录与 HID 描述符。
      */
     @SuppressLint("MissingPermission")
     fun registerApp() {
         val hid = hidDevice ?: return
         if (isAppRegistered) return
 
-        val sdp = BluetoothHidDeviceAppSdpSettings(
-            "AirCursor Mouse",
-            "AirCursor Bluetooth Mouse",
-            "AirCursor",
-            BluetoothHidDevice.SUBCLASS1_MOUSE,
-            MOUSE_REPORT_DESCRIPTOR
-        )
+        val sdp = if (isComboMode) {
+            BluetoothHidDeviceAppSdpSettings(
+                "AirCursor Combo",
+                "AirCursor Keyboard & Mouse",
+                "AirCursor",
+                BluetoothHidDevice.SUBCLASS1_COMBO, // 0xC0: 复合设备 (键盘 + 鼠标)
+                COMBO_REPORT_DESCRIPTOR
+            )
+        } else {
+            BluetoothHidDeviceAppSdpSettings(
+                "AirCursor Mouse",
+                "AirCursor Boot Mouse",
+                "AirCursor",
+                BluetoothHidDevice.SUBCLASS1_MOUSE, // 0x80: 纯鼠标
+                PURE_MOUSE_REPORT_DESCRIPTOR
+            )
+        }
 
         try {
             val success = hid.registerApp(sdp, null, null, executor, hidCallback)
-            Log.d(TAG, "registerApp invoked, success=$success")
+            Log.d(TAG, "registerApp invoked (combo=$isComboMode), success=$success")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to registerApp", e)
         }
     }
 
-    /**
-     * Connects to the host (tablet).
-     */
+    @SuppressLint("MissingPermission")
+    fun switchMode(comboMode: Boolean) {
+        if (isComboMode == comboMode) return
+        isComboMode = comboMode
+        if (isAppRegistered) {
+            try {
+                hidDevice?.unregisterApp()
+                isAppRegistered = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to unregisterApp during mode switch", e)
+            }
+            registerApp()
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
         val hid = hidDevice
@@ -235,9 +355,6 @@ class HidMouseManager(private val context: Context) {
         }
     }
 
-    /**
-     * Disconnects the current HID connection.
-     */
     @SuppressLint("MissingPermission")
     fun disconnect() {
         val hid = hidDevice ?: return
@@ -250,11 +367,9 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
-     * Sends a 4-byte standard mouse report:
-     * Byte 0: Button state (bit 0: Left, bit 1: Right, bit 2: Middle)
-     * Byte 1: Relative X displacement (-127..127)
-     * Byte 2: Relative Y displacement (-127..127)
-     * Byte 3: Relative Wheel displacement (-127..127)
+     * 发送鼠标位移与按键报文：
+     * - Combo 模式使用 REPORT_ID_MOUSE (2)
+     * - 纯鼠标模式使用 reportId = 0
      */
     @SuppressLint("MissingPermission")
     fun sendMouseReport(buttonState: Byte, dx: Int, dy: Int, wheel: Int): Boolean {
@@ -266,18 +381,83 @@ class HidMouseManager(private val context: Context) {
         val clampedWheel = wheel.coerceIn(-127, 127).toByte()
 
         val report = byteArrayOf(buttonState, clampedDx, clampedDy, clampedWheel)
+        val reportId = if (isComboMode) REPORT_ID_MOUSE.toInt() else 0
+
         return try {
-            // reportId = 0 since standard Boot Mouse descriptor has no Report ID
-            hid.sendReport(device, 0, report)
+            hid.sendReport(device, reportId, report)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to sendReport", e)
+            Log.e(TAG, "Failed to sendMouseReport", e)
             false
         }
     }
 
     /**
-     * Release resources.
+     * 发送实体键盘按键报文 (按下后自动释放)：
+     * 仅在 Combo 模式下有效，直接由平板底层 input subsystem 接收并转送给活动输入法（如 vivo 输入法）
      */
+    @SuppressLint("MissingPermission")
+    fun sendKeyboardKey(keycode: Byte, modifier: Byte = 0) {
+        val hid = hidDevice ?: return
+        val device = connectedDevice ?: return
+        if (!isComboMode) return
+
+        executor.execute {
+            try {
+                // Key Down
+                val press = byteArrayOf(modifier, 0, keycode, 0, 0, 0, 0, 0)
+                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), press)
+                Thread.sleep(15)
+                // Key Up
+                val release = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), release)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to sendKeyboardKey $keycode", e)
+            }
+        }
+    }
+
+    /**
+     * 将 ASCII 字符串转换为 HID 按键序列发送给平板（供 vivo 物理键盘拼音候选栏输入）
+     */
+    fun sendKeyboardText(text: String) {
+        if (!isComboMode) return
+        for (c in text) {
+            val mapping = charToKeycode(c)
+            if (mapping != null) {
+                sendKeyboardKey(mapping.first, mapping.second)
+                try {
+                    Thread.sleep(20)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }
+    }
+
+    private fun charToKeycode(c: Char): Pair<Byte, Byte>? {
+        return when (c) {
+            in 'a'..'z' -> Pair((c - 'a' + 4).toByte(), 0.toByte())
+            in 'A'..'Z' -> Pair((c - 'A' + 4).toByte(), 0x02.toByte()) // Shift
+            in '1'..'9' -> Pair((c - '1' + 0x1E).toByte(), 0.toByte())
+            '0' -> Pair(0x27.toByte(), 0.toByte())
+            ' ' -> Pair(KEY_SPACE, 0.toByte())
+            '\n' -> Pair(KEY_ENTER, 0.toByte())
+            '\b' -> Pair(KEY_BACKSPACE, 0.toByte())
+            '\t' -> Pair(KEY_TAB, 0.toByte())
+            '-' -> Pair(0x2D.toByte(), 0.toByte())
+            '=' -> Pair(0x2E.toByte(), 0.toByte())
+            '[' -> Pair(0x2F.toByte(), 0.toByte())
+            ']' -> Pair(0x30.toByte(), 0.toByte())
+            '\\' -> Pair(0x31.toByte(), 0.toByte())
+            ';' -> Pair(0x33.toByte(), 0.toByte())
+            '\'' -> Pair(0x34.toByte(), 0.toByte())
+            ',' -> Pair(0x36.toByte(), 0.toByte())
+            '.' -> Pair(0x37.toByte(), 0.toByte())
+            '/' -> Pair(0x38.toByte(), 0.toByte())
+            else -> null
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun release() {
         try {
