@@ -50,7 +50,8 @@
 
     <!-- Sensitivity & Scroll Direction -->
     <string name="sensitivity_touchpad">触控板灵敏度: %s</string>
-    <string name="sensitivity_wheel">滚轮滑动灵敏度: %s</string>
+    <string name="sensitivity_two_finger">双指拖动灵敏度: %s</string>
+    <string name="sensitivity_wheel">滚轮栏灵敏度: %s</string>
     <string name="touchpad_scroll_direction_title">触控板双指滑动方向：</string>
     <string name="touchpad_scroll_direction_natural">自然滑动（手指上推页面下滚，与触屏一致，默认）</string>
     <string name="touchpad_scroll_direction_inverted">反向滑动（传统鼠标滚轮方向）</string>

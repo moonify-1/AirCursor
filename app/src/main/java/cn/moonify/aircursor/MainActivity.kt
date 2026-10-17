@@ -57,6 +57,7 @@ class MainActivity : AppCompatActivity() {
         const val PREFS_NAME = "aircursor_prefs"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_TOUCHPAD_SENS = "touchpad_sens"
+        const val KEY_TWO_FINGER_SENS = "two_finger_sens"
         const val KEY_WHEEL_SENS = "wheel_sens"
         const val KEY_TOUCHPAD_SCROLL_DIRECTION = "touchpad_scroll_direction"
         const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
@@ -242,11 +243,15 @@ class MainActivity : AppCompatActivity() {
         binding.sbTouchpadSens.progress = (savedTouchpadSens * 10).toInt().coerceIn(5, 30)
         binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", savedTouchpadSens)
 
+        val savedTwoFingerSens = prefs.getFloat(KEY_TWO_FINGER_SENS, prefs.getFloat(KEY_WHEEL_SENS, 0.2f))
+        binding.touchpadView.scrollSensitivity = savedTwoFingerSens
+        binding.sbTwoFingerSens.progress = (savedTwoFingerSens * 10).toInt().coerceIn(1, 30)
+        binding.tvTwoFingerSensLabel.text = String.format("双指拖动灵敏度: %.1fx", savedTwoFingerSens)
+
         val savedWheelSens = prefs.getFloat(KEY_WHEEL_SENS, 0.2f)
         binding.wheelBarView.sensitivity = savedWheelSens
-        binding.touchpadView.scrollSensitivity = savedWheelSens
         binding.sbWheelSens.progress = (savedWheelSens * 10).toInt().coerceIn(1, 20)
-        binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", savedWheelSens)
+        binding.tvWheelSensLabel.text = String.format("滚轮栏灵敏度: %.1fx", savedWheelSens)
 
         // Touchpad two-finger scroll direction setup (default: true for natural swipe direction)
         val savedTouchpadNatural = prefs.getBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, true)
@@ -398,12 +403,24 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
+        binding.sbTwoFingerSens.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val sens = (progress.coerceAtLeast(1)) / 10f
+                binding.touchpadView.scrollSensitivity = sens
+                binding.tvTwoFingerSensLabel.text = String.format("双指拖动灵敏度: %.1fx", sens)
+                if (fromUser) {
+                    prefs.edit().putFloat(KEY_TWO_FINGER_SENS, sens).apply()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
         binding.sbWheelSens.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val sens = (progress.coerceAtLeast(1)) / 10f
                 binding.wheelBarView.sensitivity = sens
-                binding.touchpadView.scrollSensitivity = sens
-                binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", sens)
+                binding.tvWheelSensLabel.text = String.format("滚轮栏灵敏度: %.1fx", sens)
                 if (fromUser) {
                     prefs.edit().putFloat(KEY_WHEEL_SENS, sens).apply()
                 }
