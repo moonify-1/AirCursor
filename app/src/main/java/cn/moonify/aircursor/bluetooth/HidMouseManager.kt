@@ -195,11 +195,17 @@ class HidMouseManager(private val context: Context) {
         )
 
         // 常用 HID 按键码 (Usage Page 0x07)
+        const val KEY_V: Byte = 0x19
         const val KEY_ENTER: Byte = 0x28
         const val KEY_ESCAPE: Byte = 0x29
         const val KEY_BACKSPACE: Byte = 0x2A
         const val KEY_TAB: Byte = 0x2B
         const val KEY_SPACE: Byte = 0x2C
+
+        const val MODIFIER_LEFT_CTRL: Byte = 0x01
+        const val MODIFIER_LEFT_SHIFT: Byte = 0x02
+        const val MODIFIER_LEFT_ALT: Byte = 0x04
+        const val MODIFIER_LEFT_GUI: Byte = 0x08
     }
 
     interface Listener {
@@ -686,6 +692,21 @@ class HidMouseManager(private val context: Context) {
         keyboardExecutor.execute {
             try {
                 sendKeySync(keycode, modifier)
+            } finally {
+                sendKeyboardReleaseSync()
+            }
+        }
+    }
+
+    /**
+     * 发送 Ctrl + V 粘贴快捷键：
+     * 用于配合平板端剪贴板中继，实现免切换输入法 100% 精准文字粘贴落字
+     */
+    fun sendPasteShortcut() {
+        if (!isKeyboardSupported) return
+        keyboardExecutor.execute {
+            try {
+                sendKeySync(KEY_V, MODIFIER_LEFT_CTRL, pressHoldMs = 25L, releaseGapMs = 15L)
             } finally {
                 sendKeyboardReleaseSync()
             }

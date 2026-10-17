@@ -4,7 +4,10 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
@@ -57,12 +60,16 @@ class RfcommClientManager {
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val sendExecutor = Executors.newSingleThreadExecutor()
     private val connectExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var socket: BluetoothSocket? = null
 
     @Volatile
     private var dataOutputStream: DataOutputStream? = null
+
+    @Volatile
+    private var dataInputStream: DataInputStream? = null
 
     @Volatile
     var connectedDevice: BluetoothDevice? = null
@@ -154,6 +161,7 @@ class RfcommClientManager {
             if (connectedSocket != null && connectedSocket.isConnected) {
                 socket = connectedSocket
                 dataOutputStream = DataOutputStream(connectedSocket.outputStream)
+                dataInputStream = DataInputStream(connectedSocket.inputStream)
                 connectedDevice = device
                 updateState(STATE_CONNECTED, device)
                 Log.d(TAG, "RFCOMM connected successfully to ${device.address}")
@@ -168,9 +176,17 @@ class RfcommClientManager {
         }
     }
 
-    fun sendText(text: String) {
+    /**
+     * 发送文本至平板，并同步/异步接收平板回执：
+     * 1. 若平板回复 ACK_PASTE：说明平板已将文字写入剪贴板，调用方立即发送 Ctrl+V 进行粘贴；
+     * 2. 若平板回复 ACK_COMMITTED：说明平板已直接通过 IME commitText 落字，无需发送按键；
+     * 3. 若超时或异常：兜底调用回调通知触发粘贴。
+     */
+    fun sendText(text: String, onResponse: ((response: String) -> Unit)? = null) {
         val dos = dataOutputStream
-        if (connectionState != STATE_CONNECTED || dos == null) {
+        val dis = dataInputStream
+        val s = socket
+        if (connectionState != STATE_CONNECTED || dos == null || s == null || !s.isConnected) {
             Log.w(TAG, "Cannot send text, RFCOMM not connected")
             return
         }
@@ -180,6 +196,28 @@ class RfcommClientManager {
                 dos.writeUTF(text)
                 dos.flush()
                 Log.d(TAG, "Sent text via RFCOMM: $text")
+
+                var response: String? = null
+                try {
+                    var elapsed = 0
+                    while (elapsed < 1200 && (dis == null || dis.available() <= 0) && s.isConnected) {
+                        Thread.sleep(10)
+                        elapsed += 10
+                    }
+                    if (dis != null && dis.available() > 0) {
+                        response = dis.readUTF()
+                        Log.d(TAG, "Received ACK from tablet: $response")
+                    }
+                } catch (te: Exception) {
+                    Log.w(TAG, "Timeout or error reading ACK from tablet: ${te.message}")
+                }
+
+                val finalResponse = response ?: RfcommConstants.ACK_PASTE
+                if (onResponse != null) {
+                    mainHandler.post {
+                        onResponse.invoke(finalResponse)
+                    }
+                }
             } catch (e: IOException) {
                 Log.e(TAG, "Failed to send text, socket might be disconnected", e)
                 disconnect()
@@ -188,8 +226,8 @@ class RfcommClientManager {
         }
     }
 
-    fun sendCommand(command: String) {
-        sendText(command)
+    fun sendCommand(command: String, onResponse: ((response: String) -> Unit)? = null) {
+        sendText(command, onResponse)
     }
 
     fun disconnect() {
@@ -201,12 +239,16 @@ class RfcommClientManager {
 
     private fun closeInternal() {
         try {
+            dataInputStream?.close()
+        } catch (_: Exception) {}
+        try {
             dataOutputStream?.close()
         } catch (_: Exception) {}
         try {
             socket?.close()
         } catch (_: Exception) {}
 
+        dataInputStream = null
         dataOutputStream = null
         socket = null
         connectedDevice = null

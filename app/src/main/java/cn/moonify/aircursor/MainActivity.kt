@@ -43,6 +43,7 @@ import cn.moonify.aircursor.bluetooth.HidMouseManager
 import cn.moonify.aircursor.bluetooth.PinyinConverter
 import cn.moonify.aircursor.bluetooth.RfcommClientManager
 import cn.moonify.aircursor.bluetooth.RfcommConstants
+import cn.moonify.aircursor.bluetooth.TabletRfcommServer
 import cn.moonify.aircursor.bluetooth.TouchContact
 import cn.moonify.aircursor.databinding.ActivityMainBinding
 import java.util.concurrent.Executors
@@ -184,6 +185,9 @@ class MainActivity : AppCompatActivity() {
         Executors.newSingleThreadExecutor().execute {
             PinyinConverter.init(applicationContext)
         }
+
+        // 启动平板端接收中继服务（支持免切输入法剪贴板自动粘贴）
+        TabletRfcommServer.start(applicationContext)
 
         Toast.makeText(this, "AirCursor v${BuildConfig.VERSION_NAME} (构建: ${BuildConfig.BUILD_TIME})", Toast.LENGTH_SHORT).show()
     }
@@ -656,14 +660,20 @@ class MainActivity : AppCompatActivity() {
 
             override fun onEmptyBackspace() {
                 binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+                }
             }
 
             override fun onEnterPressed() {
                 binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                }
                 binding.etInput.text?.clear()
             }
 
@@ -715,8 +725,11 @@ class MainActivity : AppCompatActivity() {
                 actionId == EditorInfo.IME_ACTION_NEXT ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
                 binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                }
                 binding.etInput.text?.clear()
                 true
             } else {
@@ -727,9 +740,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 智能双通道发送文本至平板：
-     * 1. 串口已连接时：走 RFCOMM SPP 直接落字（适合平板运行 AirCursor 输入法，100% 原始 UTF-8 字符精准上屏）；
-     * 2. 串口未开启/未连接时（走 HID 直连）：自动将中文转译为拼音击键并映射中英文标点，模拟外接物理键盘无缝触发 vivo 等平板候选栏与上屏；
+     * 智能多通道发送文本至平板：
+     * 1. 串口已连接时（免切输入法直通 / 方案B）：
+     *    手机通过 RFCOMM 将文本送达平板系统剪贴板，平板回复 ACK_PASTE 后手机立即通过 HID 发送 Ctrl+V 触发精准粘贴！
+     *    （若平板开启了 AirCursor 输入法，则由 IME 直接 commitText 落字，零延迟 100% 绝对精准）；
+     * 2. 串口未连接时（走 HID 直连 / 方案C）：自动将中文转译为拼音击键并映射中英文标点，模拟外接物理键盘选词上屏；
      * 3. 纯鼠标模式且串口未连接时：友好弹出 Toast 提示开启复合模式。
      */
     private fun sendTextToTablet(text: String) {
@@ -737,13 +752,19 @@ class MainActivity : AppCompatActivity() {
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
 
         if (rfConnected) {
-            rfcommClientManager.sendText(text)
+            rfcommClientManager.sendText(text) { ack ->
+                if (ack == RfcommConstants.ACK_PASTE) {
+                    // 平板端已将原始文本安全写入系统剪贴板，手机立即发送物理 Ctrl+V 触发精准粘贴！
+                    hidMouseManager.sendPasteShortcut()
+                }
+                // 若 ack == ACK_COMMITTED，说明平板使用 AirCursor 输入法并已由 IME commitText 直接上屏，无需发送 Ctrl+V
+            }
         } else if (hidConnected && hidMouseManager.isComboMode) {
             hidMouseManager.sendChineseTextAsPinyin(text)
         } else if (hidConnected && !hidMouseManager.isComboMode) {
             Toast.makeText(
                 this,
-                "当前为纯鼠标模式。输入中文请在设置中开启【外接键盘复合模式】或在平板启用 AirCursor 输入法",
+                "当前为纯鼠标模式。输入中文请在设置中开启【外接键盘复合模式】或在平板开启 AirCursor",
                 Toast.LENGTH_LONG
             ).show()
         } else {
@@ -973,12 +994,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 3. Mode Badge
-        when (hidMouseManager.hidMode) {
-            HidMouseManager.MODE_TOUCHPAD -> {
+        val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        when {
+            rfConnected -> {
+                updateBadge(binding.tvBadgeCombo, "⚡ 剪贴板直通 (100%精准)", R.color.accent_green, R.color.accent_green_bg)
+            }
+            hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD -> {
                 updateBadge(binding.tvBadgeCombo, "✨ 智能触控板", R.color.primary, R.color.tab_bg)
             }
-            HidMouseManager.MODE_COMBO -> {
-                updateBadge(binding.tvBadgeCombo, "⌨ 键盘+鼠标", R.color.primary, R.color.tab_bg)
+            hidMouseManager.hidMode == HidMouseManager.MODE_COMBO -> {
+                updateBadge(binding.tvBadgeCombo, "⌨ 拼音模拟打字", R.color.primary, R.color.tab_bg)
             }
             else -> {
                 updateBadge(binding.tvBadgeCombo, "🖱 纯鼠标模式", R.color.badge_gray_text, R.color.badge_gray_bg)
@@ -1001,15 +1026,16 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("平板使用模式说明")
             .setMessage(
-                "本应用支持两种平板工作模式：\n\n" +
-                "【模式一：推荐！保留 vivo 默认输入法】\n" +
-                "1. 平板保持系统默认的【vivo 输入法】（无需切换）；\n" +
-                "2. 手机端开启【物理外接键盘模式】并连接平板；\n" +
-                "3. 平板识别到外接物理键盘后，点击任何输入框均不会弹出全尺寸软键盘，而是自动弹出 vivo 专属的外接键盘悬浮候选栏与快捷条，光标正常闪烁！\n\n" +
-                "【模式二：AirCursor 极简直接上屏模式】\n" +
+                "本应用支持三种打字工作模式：\n\n" +
+                "【模式一：推荐！免切输入法 100% 精准直通 (方案B)】\n" +
+                "1. 平板无需切换输入法，继续保留系统默认的【vivo 输入法】；\n" +
+                "2. 平板端打开 AirCursor（后台保持运行），手机连接后顶部将亮起【⚡ 剪贴板直通 (100%精准)】徽章；\n" +
+                "3. 手机端输入任何中文、生僻字、标点符号、中英混排，均通过蓝牙剪贴板中继 + 自动 Ctrl+V 毫秒级精准落字，零错别字！\n\n" +
+                "【模式二：AirCursor 极简直接上屏模式 (方案A)】\n" +
                 "1. 在平板【语言与输入法】中将默认输入法切换为【AirCursor】；\n" +
-                "2. 已修复点击输入框无光标问题（已更新为 1px 响应视图）；\n" +
-                "3. 点击输入框正常出现闪烁光标，且屏幕完全无键盘遮挡，手机端输入中文直接落字上屏！"
+                "2. 点击输入框正常出现闪烁光标，且屏幕无键盘遮挡，手机输入直接通过底层接口落字上屏。\n\n" +
+                "【模式三：纯 HID 物理外接键盘模式 (方案C)】\n" +
+                "平板未安装 AirCursor 时的直连模式：自动通过拼音转译模拟物理键盘击键并按空格选词上屏。"
             )
             .setPositiveButton(getString(R.string.enable_ime_btn)) { _, _ ->
                 val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
