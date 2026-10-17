@@ -57,17 +57,18 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        private const val PREFS_NAME = "aircursor_prefs"
-        private const val KEY_THEME_MODE = "theme_mode"
-        private const val KEY_TOUCHPAD_SENS = "touchpad_sens"
-        private const val KEY_WHEEL_SENS = "wheel_sens"
-        private const val KEY_TOUCHPAD_SCROLL_DIRECTION = "touchpad_scroll_direction"
-        private const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
-        private const val KEY_COMBO_MODE = "combo_mode"
-        private const val KEY_HID_MODE = "hid_mode"
-        private const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
-        private const val KEY_SHOW_MOUSE_BUTTONS = "show_mouse_buttons"
-        private const val KEY_ANTI_SCREENSHOT = "anti_screenshot"
+        const val PREFS_NAME = "aircursor_prefs"
+        const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_TOUCHPAD_SENS = "touchpad_sens"
+        const val KEY_WHEEL_SENS = "wheel_sens"
+        const val KEY_TOUCHPAD_SCROLL_DIRECTION = "touchpad_scroll_direction"
+        const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
+        const val KEY_COMBO_MODE = "combo_mode"
+        const val KEY_HID_MODE = "hid_mode"
+        const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
+        const val KEY_SHOW_MOUSE_BUTTONS = "show_mouse_buttons"
+        const val KEY_ANTI_SCREENSHOT = "anti_screenshot"
+        const val KEY_DONT_SHOW_BLACK_SCREEN_DIALOG = "dont_show_black_screen_dialog"
 
         const val THEME_NIGHT = "night"
         const val THEME_LIGHT = "day"
@@ -366,6 +367,14 @@ class MainActivity : AppCompatActivity() {
         // Top Status Card click on Mouse screen navigates to Settings
         binding.cardConnectionProps.setOnClickListener {
             switchTab(false)
+        }
+
+        // Black Screen Touchpad Mode triggers
+        binding.btnBlackScreen.setOnClickListener {
+            launchBlackScreenMode()
+        }
+        binding.btnSettingsBlackScreen.setOnClickListener {
+            launchBlackScreenMode()
         }
 
         // Theme Mode RadioGroup listener
@@ -1140,6 +1149,36 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {}
         }
         Toast.makeText(this, "请前往手机【系统设置 -> 快捷与辅助 -> 分屏多任务】中关闭三指分屏", Toast.LENGTH_LONG).show()
+    }
+
+    private fun launchBlackScreenMode() {
+        val dontShow = prefs.getBoolean(KEY_DONT_SHOW_BLACK_SCREEN_DIALOG, false)
+        if (dontShow) {
+            startActivity(Intent(this, BlackScreenTouchpadActivity::class.java))
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("进入全屏黑屏触控板模式")
+            .setMessage(
+                "【黑屏触控特性】\n" +
+                "• 界面将转为 100% 纯黑无光状态，并将屏幕调至最低微光极限，OLED 屏幕像素完全熄灭，极度省电且暗光不刺眼；\n" +
+                "• 整块手机屏幕均为触控板无边界感应区，手指滑动毫无局限；\n" +
+                "• 单指移动、轻触左键、双指右键/滚轮平移、三指多任务等全部功能正常使用。\n\n" +
+                "【如何退出黑屏模式】\n" +
+                "• 按手机返回键 / 侧滑返回；\n" +
+                "• 按手机侧面任意音量键；\n" +
+                "• 或在屏幕上四指同时轻点一次即可退出。"
+            )
+            .setPositiveButton("立即进入") { _, _ ->
+                startActivity(Intent(this, BlackScreenTouchpadActivity::class.java))
+            }
+            .setNeutralButton("不再提示并进入") { _, _ ->
+                prefs.edit().putBoolean(KEY_DONT_SHOW_BLACK_SCREEN_DIALOG, true).apply()
+                startActivity(Intent(this, BlackScreenTouchpadActivity::class.java))
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     override fun onDestroy() {

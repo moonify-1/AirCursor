@@ -52,6 +52,7 @@ class TouchpadView @JvmOverloads constructor(
         fun onTouchpadReport(contacts: List<TouchContact>) {}
         fun onWheel(wheel: Int) {}
         fun onThreeFingerHorizontalSwipe() {}
+        fun onFourFingerTap() {}
     }
 
     var callback: Callback? = null
@@ -154,6 +155,15 @@ class TouchpadView @JvmOverloads constructor(
     private var lastThreeFingerFocusX = 0f
     private var lastThreeFingerFocusY = 0f
     private var threeFingerMaxDistance = 0f
+
+    // 四指手势 (如全屏黑屏模式下四指轻点退出)
+    private var hasFourFingersInGesture = false
+    private var fourFingerStartTime = 0L
+    private var fourFingerStartX = 0f
+    private var fourFingerStartY = 0f
+    private var fourFingerMaxDistance = 0f
+    private val maxFourFingerTapDurationMs = 500L
+    private val maxFourFingerTapDistancePx get() = 40f * resources.displayMetrics.density
 
     // 判定阈值 (根据设备密度自动缩放)
     private val maxTapDurationMs = 200L
@@ -324,6 +334,8 @@ class TouchpadView @JvmOverloads constructor(
                 hasThreeFingersInGesture = false
                 hasTriggeredThreeFinger = false
                 threeFingerMaxDistance = 0f
+                hasFourFingersInGesture = false
+                fourFingerMaxDistance = 0f
                 scrollAccumulatorX = 0f
                 scrollAccumulatorY = 0f
                 velocityHistoryCount = 0
@@ -339,6 +351,14 @@ class TouchpadView @JvmOverloads constructor(
                 if (isDragging) {
                     isDragging = false
                     callback?.onDragEnd()
+                }
+
+                if (event.pointerCount >= 4) {
+                    hasFourFingersInGesture = true
+                    fourFingerStartTime = now
+                    fourFingerStartX = computeFocusX(event)
+                    fourFingerStartY = computeFocusY(event)
+                    fourFingerMaxDistance = 0f
                 }
 
                 if (event.pointerCount >= 3) {
@@ -367,6 +387,16 @@ class TouchpadView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                // 四指轻触位移追踪
+                if (hasFourFingersInGesture) {
+                    val currentFocusX = computeFocusX(event)
+                    val currentFocusY = computeFocusY(event)
+                    val dist = hypot((currentFocusX - fourFingerStartX).toDouble(), (currentFocusY - fourFingerStartY).toDouble()).toFloat()
+                    if (dist > fourFingerMaxDistance) {
+                        fourFingerMaxDistance = dist
+                    }
+                }
+
                 // ==================== 1. 三指手势处理 ====================
                 if (hasThreeFingersInGesture || event.pointerCount >= 3) {
                     if (!hasThreeFingersInGesture) {
@@ -478,6 +508,17 @@ class TouchpadView @JvmOverloads constructor(
             MotionEvent.ACTION_POINTER_UP -> {
                 val actionIndex = event.actionIndex
                 val remainingPointers = event.pointerCount - 1
+
+                if (hasFourFingersInGesture) {
+                    val duration = now - fourFingerStartTime
+                    if (duration <= maxFourFingerTapDurationMs && fourFingerMaxDistance <= maxFourFingerTapDistancePx) {
+                        hasFourFingersInGesture = false
+                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        callback?.onFourFingerTap()
+                    } else {
+                        hasFourFingersInGesture = false
+                    }
+                }
 
                 if (hasThreeFingersInGesture) {
                     if (!hasTriggeredThreeFinger) {
@@ -609,6 +650,8 @@ class TouchpadView @JvmOverloads constructor(
                 hasThreeFingersInGesture = false
                 hasTriggeredThreeFinger = false
                 threeFingerMaxDistance = 0f
+                hasFourFingersInGesture = false
+                fourFingerMaxDistance = 0f
                 scrollAccumulatorX = 0f
                 scrollAccumulatorY = 0f
                 parent?.requestDisallowInterceptTouchEvent(false)
@@ -662,6 +705,8 @@ class TouchpadView @JvmOverloads constructor(
                 hasThreeFingersInGesture = false
                 hasTriggeredThreeFinger = false
                 threeFingerMaxDistance = 0f
+                hasFourFingersInGesture = false
+                fourFingerMaxDistance = 0f
                 scrollAccumulatorX = 0f
                 scrollAccumulatorY = 0f
                 lastTapUpTime = 0L
