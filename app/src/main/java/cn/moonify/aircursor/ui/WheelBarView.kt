@@ -5,12 +5,14 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
+import android.os.Build
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 
 /**
- * 48dp-wide vertical scroll bar for sending HID wheel reports.
+ * Vertical scroll bar extended to screen right edge for sending HID wheel reports.
  */
 class WheelBarView @JvmOverloads constructor(
     context: Context,
@@ -33,6 +35,26 @@ class WheelBarView @JvmOverloads constructor(
 
     init {
         setBackgroundColor(androidx.core.content.ContextCompat.getColor(context, cn.moonify.aircursor.R.color.wheel_bg))
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        updateSystemGestureExclusion()
+    }
+
+    /**
+     * 在 Android 10+ 上将滚轮栏区域加入系统手势排除矩形，防止贴边滑动时触发系统侧滑返回手势
+     */
+    private fun updateSystemGestureExclusion() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            post {
+                if (width > 0 && height > 0) {
+                    try {
+                        systemGestureExclusionRects = listOf(Rect(0, 0, width, height))
+                    } catch (_: Exception) {}
+                }
+            }
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
