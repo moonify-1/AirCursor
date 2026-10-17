@@ -179,6 +179,18 @@ class TouchpadView @JvmOverloads constructor(
         updateSystemGestureExclusion()
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        updateSystemGestureExclusion()
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus) {
+            updateSystemGestureExclusion()
+        }
+    }
+
     /**
      * 在 Android 10+ 上将触控板区域加入系统手势排除矩形，防止手机侧滑返回截断手势
      */

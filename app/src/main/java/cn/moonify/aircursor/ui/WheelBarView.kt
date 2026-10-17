@@ -42,6 +42,18 @@ class WheelBarView @JvmOverloads constructor(
         updateSystemGestureExclusion()
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        updateSystemGestureExclusion()
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus) {
+            updateSystemGestureExclusion()
+        }
+    }
+
     /**
      * 在 Android 10+ 上将滚轮栏区域加入系统手势排除矩形，防止贴边滑动时触发系统侧滑返回手势
      */
