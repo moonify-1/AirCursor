@@ -18,15 +18,12 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.text.Editable
-import android.text.TextWatcher
 import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
@@ -92,7 +89,6 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var currentButtonState: Byte = 0x00
 
-    private var isInternalClearing = false
     private var isInputModeActive = false
     private var wasKeyboardVisible = false
 
@@ -318,6 +314,7 @@ class MainActivity : AppCompatActivity() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
         binding.etInput.clearFocus()
+        binding.etInput.text?.clear()
         setInputModeActive(false)
     }
 
@@ -625,7 +622,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 软键盘退格与回车拦截监听（解决手机软键盘在输入框为空时点击删除或回车无法转发至平板的问题）
+        // 软键盘输入与编辑拦截监听（捕获候选词/推荐词上屏、空输入框退格与回车转发至平板）
         binding.etInput.keyEventListener = object : cn.moonify.aircursor.ui.RemoteEditText.KeyEventListener {
+            override fun onTextCommitted(text: String) {
+                sendTextToTablet(text)
+            }
+
             override fun onEmptyBackspace() {
                 binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
@@ -634,16 +636,9 @@ class MainActivity : AppCompatActivity() {
 
             override fun onEnterPressed() {
                 binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                val currentText = binding.etInput.text?.toString() ?: ""
-                if (currentText.isNotEmpty()) {
-                    sendTextToTablet(currentText)
-                    isInternalClearing = true
-                    binding.etInput.text?.clear()
-                    isInternalClearing = false
-                } else {
-                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
-                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
-                }
+                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                binding.etInput.text?.clear()
             }
 
             override fun onInputCancelled() {
@@ -685,7 +680,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 软键盘回车/完成监听：当手机软键盘点击“完成/发送”或 Enter 键时，确保文本即时发送或转发物理回车
+        // 软键盘回车/完成监听：当手机软键盘点击“完成/发送”或 Enter 键时，确保转发物理回车
         binding.etInput.setOnEditorActionListener { _, actionId, event ->
             if (actionId == EditorInfo.IME_ACTION_DONE ||
                 actionId == EditorInfo.IME_ACTION_SEND ||
@@ -693,46 +688,15 @@ class MainActivity : AppCompatActivity() {
                 actionId == EditorInfo.IME_ACTION_SEARCH ||
                 actionId == EditorInfo.IME_ACTION_NEXT ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
-                val currentText = binding.etInput.text?.toString() ?: ""
-                if (currentText.isNotEmpty()) {
-                    sendTextToTablet(currentText)
-                    isInternalClearing = true
-                    binding.etInput.text?.clear()
-                    isInternalClearing = false
-                } else {
-                    binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
-                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
-                }
+                binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                binding.etInput.text?.clear()
                 true
             } else {
                 false
             }
         }
-
-        // Core Chinese Input Logic: Preventing Pinyin Composing Truncation
-        binding.etInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-
-            override fun afterTextChanged(s: Editable?) {
-                if (isInternalClearing || s.isNullOrEmpty()) return
-
-                // 核心防截断机制：
-                // 必须先通过 BaseInputConnection.getComposingSpanStart(s) == -1 判断当前是否处于拼音组词状态！
-                val composingStart = BaseInputConnection.getComposingSpanStart(s)
-                if (composingStart == -1) {
-                    val textToSend = s.toString()
-                    if (textToSend.isNotEmpty()) {
-                        sendTextToTablet(textToSend)
-
-                        isInternalClearing = true
-                        s.clear()
-                        isInternalClearing = false
-                    }
-                }
-            }
-        })
 
     }
 
