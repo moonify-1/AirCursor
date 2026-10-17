@@ -49,6 +49,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Pure Black Fullscreen Touchpad Activity -->
+        <activity
+            android:name=".BlackScreenTouchpadActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:resizeableActivity="false"
+            android:theme="@style/Theme.AirCursor.FullScreenBlack"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" />
+
         <!-- Background Bluetooth Keep-Alive Foreground Service -->
         <service
             android:name=".service.AirCursorService"

@@ -137,6 +137,19 @@
                     android:layout_height="1dp"
                     android:layout_weight="1" />
 
+                <!-- Black Screen Touchpad Mode Button -->
+                <Button
+                    android:id="@+id/btnBlackScreen"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="6dp"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="0dp"
+                    android:text="⬛ 黑屏触控"
+                    android:textSize="11sp" />
+
                 <!-- Disconnect / Settings / Connect Action Button -->
                 <Button
                     android:id="@+id/btnPropAction"
@@ -826,6 +839,53 @@
                         android:layout_weight="1"
                         android:text="前往关闭手机三指分屏"
                         android:textColor="@color/primary"
+                        android:textSize="11.5sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginVertical="10dp"
+                    android:background="@color/border_color" />
+
+                <!-- Black Screen Touchpad Mode Section -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="全屏纯黑触控板模式"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="整屏纯黑且最低亮度，OLED零发光超省电护眼，全屏无边界大面积触控；按返回键/音量键退出"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/btnSettingsBlackScreen"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="进入黑屏"
                         android:textSize="11.5sp" />
                 </LinearLayout>
             </LinearLayout>
