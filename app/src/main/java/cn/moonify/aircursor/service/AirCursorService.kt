@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import cn.moonify.aircursor.MainActivity
 import cn.moonify.aircursor.R
 import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
+import cn.moonify.aircursor.bluetooth.TabletRfcommServer
 
 /**
  * 前台连接保活服务 (Foreground Service):
@@ -89,6 +90,7 @@ class AirCursorService : Service() {
         Log.d(TAG, "AirCursorService onCreate")
         connectionManager.init(applicationContext)
         connectionManager.addListener(connectionListener)
+        TabletRfcommServer.start(applicationContext)
         createNotificationChannel()
     }
 

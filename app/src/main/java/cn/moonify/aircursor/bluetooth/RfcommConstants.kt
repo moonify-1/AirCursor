@@ -19,4 +19,10 @@ object RfcommConstants {
     const val CMD_ENTER = "__CMD_ENTER__"
     const val CMD_SPACE = "__CMD_SPACE__"
     const val CMD_RECENTS = "__CMD_RECENTS__"
+
+    // Tablet Response ACKs
+    const val ACK_COMMITTED = "__ACK_COMMITTED__"
+    const val ACK_PASTE = "__ACK_PASTE__"
+    const val ACK_HANDLED = "__ACK_HANDLED__"
+    const val ACK_PASSTHROUGH = "__ACK_PASSTHROUGH__"
 }

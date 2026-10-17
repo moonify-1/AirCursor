@@ -199,7 +199,16 @@ object PinyinConverter {
             if (!transliterated.isNullOrEmpty()) {
                 val tokens = transliterated.trim().lowercase().split("\\s+".toRegex())
                 if (tokens.size == phrase.length && tokens.all { token -> token.all { it in 'a'..'z' } }) {
-                    return tokens
+                    // 关键纠正：ICU 将 ü (nü, lü, lüe, nüe) 转译为了 Ascii u (nu, lu)
+                    // 中文全拼输入法物理键盘必须输入 v (如 nv, lv, lve, nve)，否则打出“奴/怒/路/鲁”
+                    return tokens.mapIndexed { idx, token ->
+                        val charPinyin = getPinyin(phrase[idx])
+                        if (charPinyin != null && (charPinyin.startsWith("nv") || charPinyin.startsWith("lv"))) {
+                            charPinyin
+                        } else {
+                            token
+                        }
+                    }
                 }
             }
         }

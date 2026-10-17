@@ -47,4 +47,24 @@ class PinyinConverterTest {
         assertEquals(PinyinConverter.KeystrokeAction.DirectChar('1'), actions[1])
         assertEquals(PinyinConverter.KeystrokeAction.DirectChar('!'), actions[2])
     }
+
+    @Test
+    fun testNvLvPinyin() {
+        val dictFile = java.io.File("src/main/assets/pinyin_dict.bin")
+        if (dictFile.exists()) {
+            val bytes = dictFile.readBytes()
+            val loadMethod = PinyinConverter::class.java.getDeclaredMethod("loadFromBytes", ByteArray::class.java)
+            loadMethod.isAccessible = true
+            loadMethod.invoke(PinyinConverter, bytes)
+            val fieldInit = PinyinConverter::class.java.getDeclaredField("isInitialized")
+            fieldInit.isAccessible = true
+            fieldInit.setBoolean(PinyinConverter, true)
+
+            assertEquals("nv", PinyinConverter.getPinyin('女'))
+            assertEquals("lv", PinyinConverter.getPinyin('绿'))
+            assertEquals("lv", PinyinConverter.getPinyin('旅'))
+            assertEquals("lv", PinyinConverter.getPinyin('律'))
+            assertEquals("lve", PinyinConverter.getPinyin('略'))
+        }
+    }
 }
