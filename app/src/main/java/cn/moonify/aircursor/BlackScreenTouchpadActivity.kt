@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
@@ -185,6 +186,13 @@ class BlackScreenTouchpadActivity : AppCompatActivity() {
         }
     }
 
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.pointerCount >= 3) {
+            binding.root.requestDisallowInterceptTouchEvent(true)
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     /**
      * 监听实体按键：在盲操状态下，按下手机侧面任意音量键即可安全退出
      */
@@ -199,21 +207,22 @@ class BlackScreenTouchpadActivity : AppCompatActivity() {
     private fun handleThreeFingerOverview(gestureName: String) {
         val hidConnected = hidMouseManager.connectionState == android.bluetooth.BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == cn.moonify.aircursor.bluetooth.RfcommClientManager.STATE_CONNECTED
-        val useWinTab = prefs.getString(MainActivity.KEY_RECENTS_SHORTCUT, MainActivity.SHORTCUT_ALT_TAB) == MainActivity.SHORTCUT_WIN_TAB
+        val shortcutMode = prefs.getString(MainActivity.KEY_RECENTS_SHORTCUT, MainActivity.SHORTCUT_RECENTS_OVERVIEW) ?: MainActivity.SHORTCUT_RECENTS_OVERVIEW
 
         binding.touchpadView.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
 
         if (rfConnected) {
             rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
         } else if (hidConnected && hidMouseManager.isComboMode) {
-            hidMouseManager.sendOverview(useWinTab)
+            hidMouseManager.sendOverview(shortcutMode)
         }
     }
 
     private fun handleDirectAppSwitch(direction: Int) {
         val hidConnected = hidMouseManager.connectionState == android.bluetooth.BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == cn.moonify.aircursor.bluetooth.RfcommClientManager.STATE_CONNECTED
-        val useAltTab = prefs.getString(MainActivity.KEY_RECENTS_SHORTCUT, MainActivity.SHORTCUT_ALT_TAB) != MainActivity.SHORTCUT_WIN_TAB
+        val shortcutMode = prefs.getString(MainActivity.KEY_RECENTS_SHORTCUT, MainActivity.SHORTCUT_RECENTS_OVERVIEW) ?: MainActivity.SHORTCUT_RECENTS_OVERVIEW
+        val useAltTab = (shortcutMode != MainActivity.SHORTCUT_WIN_TAB)
         val reverse = (direction < 0)
 
         binding.touchpadView.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
