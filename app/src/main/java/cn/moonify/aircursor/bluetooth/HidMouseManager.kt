@@ -619,24 +619,62 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
-     * 底层同步发送单个按键按下与释放报文（必须在单线程队列 keyboardExecutor 中执行，确保严格时序）：
+     * 带重试与异常保护的底层报文发送辅助方法，防止因蓝牙瞬时拥塞导致报文丢失
      */
     @SuppressLint("MissingPermission")
-    private fun sendKeySync(keycode: Byte, modifier: Byte = 0) {
-        val hid = hidDevice ?: return
+    private fun sendReportWithRetry(device: BluetoothDevice, reportId: Int, report: ByteArray, maxRetries: Int = 3): Boolean {
+        val hid = hidDevice ?: return false
+        for (i in 0 until maxRetries) {
+            try {
+                if (hid.sendReport(device, reportId, report)) {
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "sendReport exception on attempt $i", e)
+            }
+            try {
+                Thread.sleep(3)
+            } catch (_: InterruptedException) {
+                break
+            }
+        }
+        return false
+    }
+
+    /**
+     * 底层同步发送单个按键按下与释放报文（必须在单线程队列 keyboardExecutor 中执行，确保严格时序）：
+     * 关键修复：KeyUp 报文执行最高优先级保障，在 finally 块中兜底重试，彻底杜绝 KeyDown 遗留导致的硬件连续连击！
+     */
+    @SuppressLint("MissingPermission")
+    private fun sendKeySync(keycode: Byte, modifier: Byte = 0, pressHoldMs: Long = 16L, releaseGapMs: Long = 14L) {
         val device = connectedDevice ?: return
         try {
-            // Key Down
+            // Key Down: 重试 3 次
             val press = byteArrayOf(modifier, 0, keycode, 0, 0, 0, 0, 0)
-            hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), press)
-            Thread.sleep(12)
-            // Key Up
+            sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), press, maxRetries = 3)
+            try {
+                Thread.sleep(pressHoldMs)
+            } catch (_: InterruptedException) {
+                return
+            }
+        } finally {
+            // Key Up: 强制释放，重试 5 次确保送达
             val release = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
-            hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), release)
-            Thread.sleep(12)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in sendKeySync $keycode", e)
+            sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), release, maxRetries = 5)
+            try {
+                Thread.sleep(releaseGapMs)
+            } catch (_: InterruptedException) {}
         }
+    }
+
+    /**
+     * 强制向平板发送键盘全零释放报文，清除平板可能滞留的任何按键状态
+     */
+    @SuppressLint("MissingPermission")
+    private fun sendKeyboardReleaseSync() {
+        val device = connectedDevice ?: return
+        val release = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+        sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), release, maxRetries = 5)
     }
 
     /**
@@ -646,7 +684,11 @@ class HidMouseManager(private val context: Context) {
     fun sendKeyboardKey(keycode: Byte, modifier: Byte = 0) {
         if (!isKeyboardSupported) return
         keyboardExecutor.execute {
-            sendKeySync(keycode, modifier)
+            try {
+                sendKeySync(keycode, modifier)
+            } finally {
+                sendKeyboardReleaseSync()
+            }
         }
     }
 
@@ -761,46 +803,51 @@ class HidMouseManager(private val context: Context) {
     fun sendChineseTextAsPinyin(text: String) {
         if (!isKeyboardSupported) return
         keyboardExecutor.execute {
-            val actions = PinyinConverter.convertTextToKeystrokeActions(text)
-            Log.d(TAG, "sendChineseTextAsPinyin: text='$text', generated ${actions.size} actions")
-            for (action in actions) {
-                when (action) {
-                    is PinyinConverter.KeystrokeAction.PinyinSequence -> {
-                        for (c in action.pinyin) {
-                            val mapping = charToKeycode(c)
-                            if (mapping != null) {
-                                sendKeySync(mapping.first, mapping.second)
+            try {
+                val actions = PinyinConverter.convertTextToKeystrokeActions(text)
+                Log.d(TAG, "sendChineseTextAsPinyin: text='$text', generated ${actions.size} actions")
+                for (action in actions) {
+                    when (action) {
+                        is PinyinConverter.KeystrokeAction.PinyinSequence -> {
+                            for (c in action.pinyin) {
+                                val mapping = charToKeycode(c)
+                                if (mapping != null) {
+                                    sendKeySync(mapping.first, mapping.second, pressHoldMs = 15L, releaseGapMs = 12L)
+                                }
                             }
-                        }
-                        // 关键等待：给平板输入法核心引擎留出充分的拼音分词、候选词检索与候选悬浮窗渲染时间（80ms）
-                        try {
-                            Thread.sleep(80)
-                        } catch (_: InterruptedException) {
-                            return@execute
-                        }
-
-                        // 发送空格键，提交确认平板候选栏首位汉字候选词上屏
-                        sendKeySync(KEY_SPACE, 0)
-
-                        // 关键等待：等待平板输入法完成 InputConnection.commitText() 并重置候选缓冲区（50ms）
-                        try {
-                            Thread.sleep(50)
-                        } catch (_: InterruptedException) {
-                            return@execute
-                        }
-                    }
-                    is PinyinConverter.KeystrokeAction.DirectChar -> {
-                        val mapping = charToKeycode(action.char)
-                        if (mapping != null) {
-                            sendKeySync(mapping.first, mapping.second)
+                            // 给平板输入法核心引擎留出拼音分词、候选词检索与悬浮窗渲染时间（优化至 60ms）
                             try {
-                                Thread.sleep(20)
+                                Thread.sleep(60)
+                            } catch (_: InterruptedException) {
+                                return@execute
+                            }
+
+                            // 发送空格键，提交确认平板候选栏首位汉字候选词上屏
+                            sendKeySync(KEY_SPACE, 0, pressHoldMs = 16L, releaseGapMs = 14L)
+
+                            // 等待平板输入法完成 InputConnection.commitText() 并重置候选缓冲区（优化至 35ms）
+                            try {
+                                Thread.sleep(35)
                             } catch (_: InterruptedException) {
                                 return@execute
                             }
                         }
+                        is PinyinConverter.KeystrokeAction.DirectChar -> {
+                            val mapping = charToKeycode(action.char)
+                            if (mapping != null) {
+                                sendKeySync(mapping.first, mapping.second, pressHoldMs = 16L, releaseGapMs = 14L)
+                                try {
+                                    Thread.sleep(12)
+                                } catch (_: InterruptedException) {
+                                    return@execute
+                                }
+                            }
+                        }
                     }
                 }
+            } finally {
+                // 确保在任务结束或任何中断异常时，强行重置所有按键状态，杜绝任何按键连击残留
+                sendKeyboardReleaseSync()
             }
         }
     }
