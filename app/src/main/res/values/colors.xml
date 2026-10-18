@@ -36,4 +36,20 @@
     <color name="tab_selected">#FFFFFF</color>
     <color name="badge_gray_bg">#E2E8F0</color>
     <color name="badge_gray_text">#64748B</color>
+
+    <!-- Landscape Mode Specific Colors -->
+    <color name="land_bg">#E6E5EA</color>
+    <color name="land_capsule_bg">#EDE8F5</color>
+    <color name="land_capsule_stroke">#DDD7EA</color>
+    <color name="land_active_tab">#585368</color>
+    <color name="land_inactive_tab">#EDE8F5</color>
+    <color name="land_active_icon">#FFFFFF</color>
+    <color name="land_inactive_icon">#49454F</color>
+    <color name="land_wheel_bar">#585368</color>
+    <color name="land_key_bg">#FFFFFF</color>
+    <color name="land_key_accent_bg">#DDD8E8</color>
+    <color name="land_key_text">#1D1B20</color>
+    <color name="land_card_bg">#FFFFFF</color>
+    <color name="land_adjust_bar_bg">#DDD7EA</color>
+    <color name="land_adjust_text">#1D1B20</color>
 </resources>

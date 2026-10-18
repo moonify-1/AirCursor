@@ -34,6 +34,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:resizeableActivity="false"
+        android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.AirCursor">
 
         <activity
@@ -48,6 +49,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Pure Black Fullscreen Touchpad Activity -->
+        <activity
+            android:name=".BlackScreenTouchpadActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:resizeableActivity="false"
+            android:theme="@style/Theme.AirCursor.FullScreenBlack"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" />
 
         <!-- Background Bluetooth Keep-Alive Foreground Service -->
         <service

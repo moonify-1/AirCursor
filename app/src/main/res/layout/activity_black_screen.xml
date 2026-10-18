@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black"
+    android:keepScreenOn="true">
+
+    <!-- 全屏触控板：100% 物理屏幕覆盖，无边界高精度触控 -->
+    <cn.moonify.aircursor.ui.TouchpadView
+        android:id="@+id/touchpadView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/black" />
+
+    <!-- 顶部极简半透明退出指引（2秒后自动淡出为纯黑） -->
+    <LinearLayout
+        android:id="@+id/layoutExitTip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|top"
+        android:layout_marginTop="36dp"
+        android:background="@drawable/bg_badge"
+        android:backgroundTint="#66000000"
+        android:orientation="horizontal"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="7dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="全屏黑屏触控中 • 按返回键/音量键/四指轻点退出"
+            android:textColor="#99FFFFFF"
+            android:textSize="11.5sp" />
+    </LinearLayout>
+
+</FrameLayout>

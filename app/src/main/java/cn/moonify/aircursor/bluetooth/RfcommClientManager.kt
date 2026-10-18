@@ -4,11 +4,16 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Manages the client-side RFCOMM SPP Bluetooth socket connection to the tablet.
@@ -57,12 +62,17 @@ class RfcommClientManager {
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val sendExecutor = Executors.newSingleThreadExecutor()
     private val connectExecutor = Executors.newSingleThreadExecutor()
+    private val ackExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var socket: BluetoothSocket? = null
 
     @Volatile
     private var dataOutputStream: DataOutputStream? = null
+
+    @Volatile
+    private var dataInputStream: DataInputStream? = null
 
     @Volatile
     var connectedDevice: BluetoothDevice? = null
@@ -89,71 +99,57 @@ class RfcommClientManager {
             var lastException: Exception? = null
 
             bluetoothAdapter?.cancelDiscovery()
-
-            // 1. 尝试专属 Secure RFCOMM
             try {
-                Log.d(TAG, "Trying AirCursor Secure RFCOMM to ${device.address}")
-                val s = device.createRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
-                s.connect()
-                connectedSocket = s
+                device.fetchUuidsWithSdp()
+            } catch (_: Exception) {}
+
+            // 1. 尝试专属 Insecure RFCOMM (免配对认证弹窗拦截，连接速度最快)
+            var s0: BluetoothSocket? = null
+            try {
+                Log.d(TAG, "Trying AirCursor Insecure RFCOMM to ${device.address}")
+                s0 = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
+                s0.connect()
+                connectedSocket = s0
             } catch (e0: Exception) {
+                try { s0?.close() } catch (_: Exception) {}
                 lastException = e0
-                Log.w(TAG, "AirCursor Secure RFCOMM failed: ${e0.message}, trying AirCursor Insecure...")
+                Log.w(TAG, "AirCursor Insecure RFCOMM failed: ${e0.message}, trying Standard Insecure SPP...")
             }
 
-            // 2. 尝试专属 Insecure RFCOMM
+            // 2. 尝试通用 Insecure SPP
             if (connectedSocket == null) {
+                var s1: BluetoothSocket? = null
                 try {
-                    val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
-                    s.connect()
-                    connectedSocket = s
-                } catch (e00: Exception) {
-                    lastException = e00
-                    Log.w(TAG, "AirCursor Insecure RFCOMM failed: ${e00.message}, trying Standard SPP...")
-                }
-            }
-
-            // 3. 尝试标准 Secure RFCOMM
-            if (connectedSocket == null) {
-                try {
-                    Log.d(TAG, "Trying Standard Secure RFCOMM to ${device.address}")
-                    val s = device.createRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
-                    s.connect()
-                    connectedSocket = s
+                    Log.d(TAG, "Trying Standard Insecure SPP to ${device.address}")
+                    s1 = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
+                    s1.connect()
+                    connectedSocket = s1
                 } catch (e1: Exception) {
+                    try { s1?.close() } catch (_: Exception) {}
                     lastException = e1
-                    Log.w(TAG, "Standard Secure RFCOMM failed: ${e1.message}, trying Insecure RFCOMM...")
+                    Log.w(TAG, "Standard Insecure SPP failed: ${e1.message}, trying AirCursor Secure RFCOMM...")
                 }
             }
 
-            // 4. 尝试标准 Insecure RFCOMM
+            // 3. 尝试专属 Secure RFCOMM
             if (connectedSocket == null) {
+                var s2: BluetoothSocket? = null
                 try {
-                    val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
-                    s.connect()
-                    connectedSocket = s
+                    Log.d(TAG, "Trying AirCursor Secure RFCOMM to ${device.address}")
+                    s2 = device.createRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
+                    s2.connect()
+                    connectedSocket = s2
                 } catch (e2: Exception) {
+                    try { s2?.close() } catch (_: Exception) {}
                     lastException = e2
-                    Log.w(TAG, "Insecure RFCOMM failed: ${e2.message}, trying reflection fallback...")
-                }
-            }
-
-            // 5. 尝试底层反射创建 RFCOMM Channel 1
-            if (connectedSocket == null) {
-                try {
-                    val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                    val s = method.invoke(device, 1) as BluetoothSocket
-                    s.connect()
-                    connectedSocket = s
-                } catch (e3: Exception) {
-                    lastException = e3
-                    Log.w(TAG, "Reflection RFCOMM failed: ${e3.message}")
+                    Log.w(TAG, "AirCursor Secure RFCOMM failed: ${e2.message}")
                 }
             }
 
             if (connectedSocket != null && connectedSocket.isConnected) {
                 socket = connectedSocket
                 dataOutputStream = DataOutputStream(connectedSocket.outputStream)
+                dataInputStream = DataInputStream(connectedSocket.inputStream)
                 connectedDevice = device
                 updateState(STATE_CONNECTED, device)
                 Log.d(TAG, "RFCOMM connected successfully to ${device.address}")
@@ -168,9 +164,17 @@ class RfcommClientManager {
         }
     }
 
-    fun sendText(text: String) {
+    /**
+     * 发送文本至平板，并同步/异步接收平板回执：
+     * 1. 若平板回复 ACK_PASTE：说明平板已将文字写入剪贴板，调用方立即发送 Ctrl+V 进行粘贴；
+     * 2. 若平板回复 ACK_COMMITTED：说明平板已直接通过 IME commitText 落字，无需发送按键；
+     * 3. 若超时或异常：兜底调用回调通知触发粘贴。
+     */
+    fun sendText(text: String, onResponse: ((response: String) -> Unit)? = null) {
         val dos = dataOutputStream
-        if (connectionState != STATE_CONNECTED || dos == null) {
+        val dis = dataInputStream
+        val s = socket
+        if (connectionState != STATE_CONNECTED || dos == null || s == null || !s.isConnected) {
             Log.w(TAG, "Cannot send text, RFCOMM not connected")
             return
         }
@@ -180,6 +184,31 @@ class RfcommClientManager {
                 dos.writeUTF(text)
                 dos.flush()
                 Log.d(TAG, "Sent text via RFCOMM: $text")
+
+                var response: String? = null
+                try {
+                    // 使用线程池异步限时 600ms 读取平板 ACK 回执，毫秒级响应，彻底消除 dis.available() 在不同厂商设备上的不稳定等待延迟
+                    val ackFuture = ackExecutor.submit<String> {
+                        dis?.readUTF() ?: RfcommConstants.ACK_PASTE
+                    }
+                    response = try {
+                        ackFuture.get(600, TimeUnit.MILLISECONDS)
+                    } catch (te: TimeoutException) {
+                        ackFuture.cancel(true)
+                        Log.w(TAG, "Timeout waiting for ACK from tablet (600ms)")
+                        null
+                    }
+                    Log.d(TAG, "Received ACK from tablet: $response")
+                } catch (te: Exception) {
+                    Log.w(TAG, "Timeout or error reading ACK from tablet: ${te.message}")
+                }
+
+                val finalResponse = response ?: RfcommConstants.ACK_PASTE
+                if (onResponse != null) {
+                    mainHandler.post {
+                        onResponse.invoke(finalResponse)
+                    }
+                }
             } catch (e: IOException) {
                 Log.e(TAG, "Failed to send text, socket might be disconnected", e)
                 disconnect()
@@ -188,8 +217,8 @@ class RfcommClientManager {
         }
     }
 
-    fun sendCommand(command: String) {
-        sendText(command)
+    fun sendCommand(command: String, onResponse: ((response: String) -> Unit)? = null) {
+        sendText(command, onResponse)
     }
 
     fun disconnect() {
@@ -201,12 +230,16 @@ class RfcommClientManager {
 
     private fun closeInternal() {
         try {
+            dataInputStream?.close()
+        } catch (_: Exception) {}
+        try {
             dataOutputStream?.close()
         } catch (_: Exception) {}
         try {
             socket?.close()
         } catch (_: Exception) {}
 
+        dataInputStream = null
         dataOutputStream = null
         socket = null
         connectedDevice = null
@@ -237,5 +270,6 @@ class RfcommClientManager {
         disconnect()
         sendExecutor.shutdown()
         connectExecutor.shutdown()
+        ackExecutor.shutdown()
     }
 }

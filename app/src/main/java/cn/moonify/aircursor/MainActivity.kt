@@ -17,52 +17,93 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
-import android.text.Editable
-import android.text.TextWatcher
 import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.inputmethod.BaseInputConnection
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.hardware.SensorManager
+import android.view.OrientationEventListener
 import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
 import cn.moonify.aircursor.bluetooth.HidMouseManager
 import cn.moonify.aircursor.bluetooth.PinyinConverter
 import cn.moonify.aircursor.bluetooth.RfcommClientManager
 import cn.moonify.aircursor.bluetooth.RfcommConstants
+import cn.moonify.aircursor.bluetooth.TabletRfcommServer
+import cn.moonify.aircursor.bluetooth.TouchContact
 import cn.moonify.aircursor.databinding.ActivityMainBinding
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.experimental.and
 import kotlin.experimental.inv
 import kotlin.experimental.or
+import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        private const val PREFS_NAME = "aircursor_prefs"
-        private const val KEY_THEME_MODE = "theme_mode"
-        private const val KEY_TOUCHPAD_SENS = "touchpad_sens"
-        private const val KEY_WHEEL_SENS = "wheel_sens"
-        private const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
-        private const val KEY_COMBO_MODE = "combo_mode"
+        const val PREFS_NAME = "aircursor_prefs"
+        const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_TOUCHPAD_SENS = "touchpad_sens"
+        const val KEY_TWO_FINGER_SENS = "two_finger_sens"
+        const val KEY_WHEEL_SENS = "wheel_sens"
+        const val KEY_TOUCHPAD_SCROLL_DIRECTION = "touchpad_scroll_direction"
+        const val KEY_WHEEL_DIRECTION = "wheel_direction_natural"
+        const val KEY_COMBO_MODE = "combo_mode"
+        const val KEY_HID_MODE = "hid_mode"
+        const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
+        const val KEY_SHOW_MOUSE_BUTTONS = "show_mouse_buttons"
+        const val KEY_ANTI_SCREENSHOT = "anti_screenshot"
+        const val KEY_RIGHT_EDGE_BACK = "right_edge_back_mapping"
+        const val KEY_DONT_SHOW_BLACK_SCREEN_DIALOG = "dont_show_black_screen_dialog"
 
         const val THEME_NIGHT = "night"
         const val THEME_LIGHT = "day"
         const val THEME_SYSTEM = "system"
+
+        const val SHORTCUT_RECENTS_OVERVIEW = "recents_overview"
+        const val SHORTCUT_ALT_TAB = "alt_tab"
+        const val SHORTCUT_WIN_TAB = "win_tab"
+
+        const val KEY_LANDSCAPE_KEYBOARD_MODE = "landscape_keyboard_mode"
+        const val KEY_LANDSCAPE_SHOW_SCROLLBAR = "landscape_show_scrollbar"
+        const val KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS = "landscape_show_mouse_buttons"
+        const val KEY_LANDSCAPE_SPLIT_SWAP = "landscape_split_swap"
+        const val KEY_LANDSCAPE_SPLIT_WIDTH_INDEX = "landscape_split_width_index"
+
+        const val KEYBOARD_MODE_FULLSCREEN_HW = "fullscreen_hw"
+        const val KEYBOARD_MODE_SPLIT_SYSTEM = "split_system"
+
+        const val KEY_KB_CARD_IS_CUSTOM = "kb_card_is_custom"
+        const val KEY_KB_CARD_WIDTH_RATIO = "kb_card_width_ratio"
+        const val KEY_KB_CARD_HEIGHT_RATIO = "kb_card_height_ratio"
+        const val KEY_KB_CARD_POS_X_RATIO = "kb_card_pos_x_ratio"
+        const val KEY_KB_CARD_POS_Y_RATIO = "kb_card_pos_y_ratio"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -80,8 +121,29 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var currentButtonState: Byte = 0x00
 
-    private var isInternalClearing = false
     private var isInputModeActive = false
+    private var wasKeyboardVisible = false
+
+    private var isLandscapeMode = false
+    private var isLandscapeKeyboardActive = false
+    private var isKeyboardAdjustModeActive = false
+    private var isSplitSwapped = false
+    private var splitWidthIndex = 0
+
+    private var orientationEventListener: OrientationEventListener? = null
+    private var lastManualExitTime = 0L
+    private var pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+    private var pendingSensorCount = 0
+
+    private var isRightEdgeBackEnabled = true
+    private var isCurrentBackSwipeRightEdge = false
+    private var isRightEdgeTouchActive = false
+    private var hasRightEdgeSwipedInward = false
+    private var lastRightEdgeDownX = 0f
+    private var lastRightEdgeDownY = 0f
+    private var lastRightEdgeDownTime = 0L
+    private var wasRightEdgeCancelledBySystem = false
+    private var lastRightEdgeBackTriggerTime = 0L
 
     private val connectionListener = object : AirCursorConnectionManager.Listener {
         override fun onStateChanged() {
@@ -105,6 +167,20 @@ class MainActivity : AppCompatActivity() {
         override fun onError(message: String) {
             runOnUiThread {
                 Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
+                updateStatusText()
+            }
+        }
+    }
+
+    private val tabletServerListener = object : TabletRfcommServer.Listener {
+        override fun onServerStateChanged(isRunning: Boolean, connectedClients: Int) {
+            runOnUiThread { updateStatusText() }
+        }
+
+        override fun onTextReceived(text: String, isCommittedDirectly: Boolean) {
+            runOnUiThread {
+                val mode = if (isCommittedDirectly) "直接落字" else "剪贴板中继"
+                Toast.makeText(this@MainActivity, "平板收到文本 ($mode): $text", Toast.LENGTH_SHORT).show()
                 updateStatusText()
             }
         }
@@ -134,19 +210,86 @@ class MainActivity : AppCompatActivity() {
         applyThemeMode(savedTheme, persist = false)
 
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 触控板防截屏保护：开启 FLAG_SECURE 屏蔽三指误触手机截屏
+        val antiScreenshot = prefs.getBoolean(KEY_ANTI_SCREENSHOT, true)
+        applyAntiScreenshot(antiScreenshot)
+
+        // 优先将多指手势交由应用处理，抑制系统瞬态栏手势冲突
+        WindowCompat.getInsetsController(window, window.decorView).systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
         connectionManager.init(applicationContext)
         connectionManager.addListener(connectionListener)
+        TabletRfcommServer.addListener(tabletServerListener)
 
-        // 返回键行为：若当前在设置页，则返回鼠标页；若当前连接中或正在保持连接，则退到后台，防止意外断开
+        // 返回键行为：
+        // 1. 若开启了右侧侧滑返回映射，且手势来源于右侧边缘：向平板发送系统 Back，同时屏蔽手机退出（不退后台、原地保持）；
+        // 2. 若当前在设置页，且不是从右侧滑动触发平板返回，则返回鼠标页；
+        // 3. 否则（左侧边缘滑动或三键虚拟返回键）：若连接中则退到后台保活，未连接则正常退出应用。
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                // Android 14+ Predictive Back 手势：0 为左边缘 (EDGE_LEFT)，1 为右边缘 (EDGE_RIGHT)
+                isCurrentBackSwipeRightEdge = (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT)
+                Log.d(TAG, "handleOnBackStarted: swipeEdge=${backEvent.swipeEdge}, isRight=$isCurrentBackSwipeRightEdge")
+            }
+
+            override fun handleOnBackCancelled() {
+                isCurrentBackSwipeRightEdge = false
+                isRightEdgeTouchActive = false
+                hasRightEdgeSwipedInward = false
+                wasRightEdgeCancelledBySystem = false
+            }
+
             override fun handleOnBackPressed() {
+                val now = SystemClock.uptimeMillis()
+                val isRecentRightDown = (isRightEdgeTouchActive || wasRightEdgeCancelledBySystem) && (now - lastRightEdgeDownTime < 1200L)
+                val isRecentRightSwipe = hasRightEdgeSwipedInward && (now - lastRightEdgeDownTime < 1200L)
+                val isRightEdge = isCurrentBackSwipeRightEdge || isRecentRightDown || isRecentRightSwipe
+
+                Log.d(TAG, "handleOnBackPressed: isRightEdge=$isRightEdge, startedRight=$isCurrentBackSwipeRightEdge, recentDown=$isRecentRightDown, recentSwipe=$isRecentRightSwipe, enabled=$isRightEdgeBackEnabled, connected=${connectionManager.isConnectedOrConnecting()}")
+
+                // 重置手势状态
+                isCurrentBackSwipeRightEdge = false
+                isRightEdgeTouchActive = false
+                hasRightEdgeSwipedInward = false
+                wasRightEdgeCancelledBySystem = false
+
+                // 核心功能：手机右侧侧滑返回映射平板系统返回键，手机屏蔽返回效果
+                // 无论是否已连接平板，右边缘返回手势均由 AirCursor 原地消费，绝对不退出软件！
+                if (isRightEdgeBackEnabled && isRightEdge) {
+                    triggerTabletBack()
+                    return
+                }
+
+                // 若侧边抽屉菜单打开，优先关闭抽屉
+                if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                    binding.drawerLayout.closeDrawer(GravityCompat.START)
+                    return
+                }
+
+                // 若当前在横屏模式，优先退出横屏模式返回竖屏
+                if (isLandscapeMode) {
+                    exitLandscapeMode()
+                    return
+                }
+
+                // 若在设置页，且不是右侧边缘映射手势，则返回鼠标页
                 if (binding.layoutSettingsContainer.visibility == View.VISIBLE) {
                     switchTab(true)
                     return
                 }
+
+                // 手机原生返回行为（左侧滑动或三键返回）：连接中退后台保活，未连接正常退出
                 if (connectionManager.isConnectedOrConnecting()) {
                     moveTaskToBack(true)
                     Toast.makeText(this@MainActivity, "AirCursor 正在后台保持连接", Toast.LENGTH_SHORT).show()
@@ -159,6 +302,9 @@ class MainActivity : AppCompatActivity() {
 
         setupUI()
         setupListeners()
+        setupLandscape()
+        setupOrientationSensor()
+        setupKeyboardCardAdjustment()
         checkAndRequestPermissions()
 
         // 异步预加载离线拼音字典，确保输入中文时零延迟
@@ -166,7 +312,97 @@ class MainActivity : AppCompatActivity() {
             PinyinConverter.init(applicationContext)
         }
 
+        // 启动平板端接收中继服务（支持免切输入法剪贴板自动粘贴）
+        TabletRfcommServer.start(applicationContext)
+
         Toast.makeText(this, "AirCursor v${BuildConfig.VERSION_NAME} (构建: ${BuildConfig.BUILD_TIME})", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.pointerCount >= 3) {
+            binding.root.requestDisallowInterceptTouchEvent(true)
+        }
+
+        // 检测手机右侧边缘滑动手势（用于非预测性返回场景及直接内滑识别兜底）
+        if (isRightEdgeBackEnabled) {
+            val screenWidth = resources.displayMetrics.widthPixels
+            val edgeThreshold = 48f * resources.displayMetrics.density
+
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (ev.rawX >= screenWidth - edgeThreshold) {
+                        isRightEdgeTouchActive = true
+                        hasRightEdgeSwipedInward = false
+                        wasRightEdgeCancelledBySystem = false
+                        lastRightEdgeDownX = ev.rawX
+                        lastRightEdgeDownY = ev.rawY
+                        lastRightEdgeDownTime = SystemClock.uptimeMillis()
+                    } else {
+                        isRightEdgeTouchActive = false
+                        hasRightEdgeSwipedInward = false
+                        wasRightEdgeCancelledBySystem = false
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (isRightEdgeTouchActive) {
+                        val dx = ev.rawX - lastRightEdgeDownX
+                        val dy = ev.rawY - lastRightEdgeDownY
+                        // 向左内滑超过 20dp 且水平位移为主
+                        if (dx < -20f * resources.displayMetrics.density && abs(dx) > abs(dy) * 0.8f) {
+                            hasRightEdgeSwipedInward = true
+                        }
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    // 若用户在应用内完成了一次完整的从右边缘向内水平滑动，且系统未拦截（如三键导航或手势未被系统层阻断）
+                    if (isRightEdgeTouchActive && hasRightEdgeSwipedInward) {
+                        val duration = SystemClock.uptimeMillis() - lastRightEdgeDownTime
+                        if (duration < 650L) {
+                            triggerTabletBack()
+                        }
+                    }
+                    isRightEdgeTouchActive = false
+                    hasRightEdgeSwipedInward = false
+                    wasRightEdgeCancelledBySystem = false
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    // 当系统手势导航（预测性返回动画或侧滑返回）接管时会收到 ACTION_CANCEL，此时保持状态供 handleOnBackPressed 使用
+                    if (isRightEdgeTouchActive) {
+                        wasRightEdgeCancelledBySystem = true
+                    }
+                }
+            }
+        }
+
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /**
+     * 触发手机右侧侧滑映射平板系统返回键：
+     * 1. 向平板下发全局系统 Back 指令；
+     * 2. 提供手机端触觉振动反馈；
+     * 3. 手机端原地保持，完全屏蔽退出/退到后台效果。
+     */
+    private fun triggerTabletBack() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastRightEdgeBackTriggerTime < 350L) {
+            return // 防抖：350ms 内忽略重复触发
+        }
+        lastRightEdgeBackTriggerTime = now
+
+        // 1. 手机端触感振动反馈（提供与系统侧滑一致的按键触感）
+        try {
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        } catch (_: Exception) {}
+
+        // 2. 发送系统返回键指令至平板（若已连接）
+        if (connectionManager.isConnectedOrConnecting()) {
+            connectionManager.sendSystemBack()
+            Log.d(TAG, "triggerTabletBack: sent Back to tablet, phone back suppressed")
+        } else {
+            Toast.makeText(this, "已触发平板返回 (当前未连接设备)", Toast.LENGTH_SHORT).show()
+            Log.d(TAG, "triggerTabletBack: not connected, phone back suppressed")
+        }
     }
 
     private fun applyThemeMode(themeMode: String, persist: Boolean = true) {
@@ -180,6 +416,18 @@ class MainActivity : AppCompatActivity() {
         }
         if (AppCompatDelegate.getDefaultNightMode() != targetNightMode) {
             AppCompatDelegate.setDefaultNightMode(targetNightMode)
+        }
+    }
+
+    /**
+     * 控制触控板界面防截屏保护：
+     * 开启 FLAG_SECURE 后，系统级拒绝触控板界面的任何截屏操作，防止三指操作误触发手机系统截屏
+     */
+    private fun applyAntiScreenshot(enabled: Boolean) {
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
     }
 
@@ -205,13 +453,31 @@ class MainActivity : AppCompatActivity() {
         binding.sbTouchpadSens.progress = (savedTouchpadSens * 10).toInt().coerceIn(5, 30)
         binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", savedTouchpadSens)
 
+        var savedTwoFingerSens = prefs.getFloat(KEY_TWO_FINGER_SENS, 1.2f)
+        // 兼容迁移：旧版 0.1x 及以下灵敏度升级映射至全新基准 1.2f
+        if (savedTwoFingerSens < 0.3f) {
+            savedTwoFingerSens = 1.2f
+            prefs.edit().putFloat(KEY_TWO_FINGER_SENS, 1.2f).apply()
+        }
+        binding.touchpadView.scrollSensitivity = savedTwoFingerSens
+        binding.sbTwoFingerSens.progress = (savedTwoFingerSens * 10).toInt().coerceIn(1, 30)
+        binding.tvTwoFingerSensLabel.text = String.format("双指拖动灵敏度: %.1fx", savedTwoFingerSens)
+
         val savedWheelSens = prefs.getFloat(KEY_WHEEL_SENS, 0.2f)
         binding.wheelBarView.sensitivity = savedWheelSens
-        binding.touchpadView.scrollSensitivity = savedWheelSens
         binding.sbWheelSens.progress = (savedWheelSens * 10).toInt().coerceIn(1, 20)
-        binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", savedWheelSens)
+        binding.tvWheelSensLabel.text = String.format("滚轮栏灵敏度: %.1fx", savedWheelSens)
 
-        // Wheel direction setup (default: true for two-finger swipe direction)
+        // Touchpad two-finger scroll direction setup (default: true for natural swipe direction)
+        val savedTouchpadNatural = prefs.getBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, true)
+        binding.touchpadView.isNaturalScroll = savedTouchpadNatural
+        if (savedTouchpadNatural) {
+            binding.rbTouchpadScrollNatural.isChecked = true
+        } else {
+            binding.rbTouchpadScrollInverted.isChecked = true
+        }
+
+        // Wheel bar direction setup (default: true for natural swipe direction)
         val savedWheelNatural = prefs.getBoolean(KEY_WHEEL_DIRECTION, true)
         binding.wheelBarView.isNaturalDirection = savedWheelNatural
         if (savedWheelNatural) {
@@ -219,6 +485,19 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.rbWheelInverted.isChecked = true
         }
+
+        // Initialize Touchpad mode
+        val isNative = (hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD)
+        binding.touchpadView.isNativeTouchpadMode = isNative
+
+        // Anti-Screenshot protection setup (default: true)
+        val antiScreenshot = prefs.getBoolean(KEY_ANTI_SCREENSHOT, true)
+        binding.switchAntiScreenshot.isChecked = antiScreenshot
+
+        // Right-Edge Back gesture mapping setup (default: true)
+        isRightEdgeBackEnabled = prefs.getBoolean(KEY_RIGHT_EDGE_BACK, true)
+        binding.switchRightEdgeBack.isChecked = isRightEdgeBackEnabled
+        binding.wheelBarView.isSystemGestureExclusionEnabled = !isRightEdgeBackEnabled
 
         // Show version and build time
         binding.tvAboutVersion.text = "AirCursor v${BuildConfig.VERSION_NAME} (构建时间: ${BuildConfig.BUILD_TIME})"
@@ -242,12 +521,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showSoftKeyboard() {
+        binding.etInput.requestFocus()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(binding.etInput, InputMethodManager.SHOW_IMPLICIT)
+    }
+
     private fun dismissInput() {
-        if (binding.etInput.isFocused) {
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
-            binding.etInput.clearFocus()
-        }
+        wasKeyboardVisible = false
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
+        binding.etInput.clearFocus()
+        binding.etInput.text?.clear()
         setInputModeActive(false)
     }
 
@@ -298,6 +583,14 @@ class MainActivity : AppCompatActivity() {
             switchTab(false)
         }
 
+        // Black Screen Touchpad Mode triggers
+        binding.btnBlackScreen.setOnClickListener {
+            launchBlackScreenMode()
+        }
+        binding.btnSettingsBlackScreen.setOnClickListener {
+            launchBlackScreenMode()
+        }
+
         // Theme Mode RadioGroup listener
         binding.rgThemeMode.setOnCheckedChangeListener { _, checkedId ->
             val newMode = when (checkedId) {
@@ -313,9 +606,26 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val sens = (progress.coerceAtLeast(5)) / 10f
                 binding.touchpadView.sensitivity = sens
+                binding.landTouchpadView.sensitivity = sens
+                binding.landSplitTouchpad.sensitivity = sens
                 binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", sens)
                 if (fromUser) {
                     prefs.edit().putFloat(KEY_TOUCHPAD_SENS, sens).apply()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        binding.sbTwoFingerSens.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val sens = (progress.coerceAtLeast(1)) / 10f
+                binding.touchpadView.scrollSensitivity = sens
+                binding.landTouchpadView.scrollSensitivity = sens
+                binding.landSplitTouchpad.scrollSensitivity = sens
+                binding.tvTwoFingerSensLabel.text = String.format("双指拖动灵敏度: %.1fx", sens)
+                if (fromUser) {
+                    prefs.edit().putFloat(KEY_TWO_FINGER_SENS, sens).apply()
                 }
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -326,8 +636,8 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val sens = (progress.coerceAtLeast(1)) / 10f
                 binding.wheelBarView.sensitivity = sens
-                binding.touchpadView.scrollSensitivity = sens
-                binding.tvWheelSensLabel.text = String.format("滚轮灵敏度: %.1fx", sens)
+                binding.landWheelBarView.sensitivity = sens
+                binding.tvWheelSensLabel.text = String.format("滚轮栏灵敏度: %.1fx", sens)
                 if (fromUser) {
                     prefs.edit().putFloat(KEY_WHEEL_SENS, sens).apply()
                 }
@@ -356,39 +666,32 @@ class MainActivity : AppCompatActivity() {
             showTabletGuideDialog()
         }
 
-        // Touchpad movements, tap and two-finger scroll
-        binding.touchpadView.callback = object : cn.moonify.aircursor.ui.TouchpadView.Callback {
-            override fun onMove(dx: Int, dy: Int) {
-                if (isInputModeActive) dismissInput()
-                hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0)
-            }
-
-            override fun onTap() {
-                if (isInputModeActive) dismissInput()
-                // Send Left button click (Down then Up)
-                val downState = currentButtonState or HidMouseManager.BUTTON_LEFT
-                hidMouseManager.sendMouseReport(downState, 0, 0, 0)
-                mainHandler.postDelayed({
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
-                }, 20)
-            }
-
-            override fun onWheel(wheel: Int) {
-                if (isInputModeActive) dismissInput()
-                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel)
-            }
-
-            override fun onThreeFingerSwipeUp() {
-                if (isInputModeActive) dismissInput()
-                handleThreeFingerSwipeUp()
-            }
+        binding.touchpadView.isNaturalScroll = prefs.getBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, true)
+        
+        // Left / Right Mouse Buttons Visibility setting
+        val showButtons = prefs.getBoolean(KEY_SHOW_MOUSE_BUTTONS, true)
+        binding.switchMouseButtons.isChecked = showButtons
+        binding.layoutMouseButtons.visibility = if (showButtons) View.VISIBLE else View.GONE
+        binding.switchMouseButtons.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(KEY_SHOW_MOUSE_BUTTONS, isChecked).apply()
+            binding.layoutMouseButtons.visibility = if (isChecked) View.VISIBLE else View.GONE
         }
+
+        // Touchpad movements, tap, scroll, and multi-finger gestures
+        binding.touchpadView.callback = createTouchpadCallback()
 
         // 48dp Scroll wheel
         binding.wheelBarView.callback = object : cn.moonify.aircursor.ui.WheelBarView.Callback {
             override fun onWheel(wheel: Int) {
                 if (isInputModeActive) dismissInput()
-                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel)
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel, 0)
+            }
+
+            override fun onSwipeBack() {
+                if (isInputModeActive) dismissInput()
+                if (isRightEdgeBackEnabled) {
+                    triggerTabletBack()
+                }
             }
         }
 
@@ -400,13 +703,13 @@ class MainActivity : AppCompatActivity() {
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
                     currentButtonState = currentButtonState and HidMouseManager.BUTTON_LEFT.inv()
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
                     true
                 }
                 else -> false
@@ -421,44 +724,64 @@ class MainActivity : AppCompatActivity() {
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     currentButtonState = currentButtonState or HidMouseManager.BUTTON_RIGHT
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
                     currentButtonState = currentButtonState and HidMouseManager.BUTTON_RIGHT.inv()
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0)
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
                     true
                 }
                 else -> false
             }
         }
 
-        // Switch Combo mode (Keyboard + Mouse) vs Pure Mouse
-        val savedComboMode = prefs.getBoolean(KEY_COMBO_MODE, false)
-        binding.switchComboMode.isChecked = savedComboMode
-        if (hidMouseManager.isComboMode != savedComboMode) {
-            hidMouseManager.switchMode(savedComboMode)
+        // HID Working Mode RadioGroup (Touchpad vs Combo vs Pure Mouse)
+        when (hidMouseManager.hidMode) {
+            HidMouseManager.MODE_TOUCHPAD -> binding.rbModeTouchpad.isChecked = true
+            HidMouseManager.MODE_COMBO -> binding.rbModeCombo.isChecked = true
+            else -> binding.rbModePureMouse.isChecked = true
         }
-        binding.switchComboMode.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean(KEY_COMBO_MODE, isChecked).apply()
-            hidMouseManager.switchMode(isChecked)
-            updateStatusText()
-            if (isChecked) {
+
+        binding.rgHidMode.setOnCheckedChangeListener { _, checkedId ->
+            val newMode = when (checkedId) {
+                R.id.rbModeTouchpad -> HidMouseManager.MODE_TOUCHPAD
+                R.id.rbModeCombo -> HidMouseManager.MODE_COMBO
+                else -> HidMouseManager.MODE_PURE_MOUSE
+            }
+            if (hidMouseManager.hidMode != newMode) {
+                hidMouseManager.switchMode(newMode)
+                binding.touchpadView.isNativeTouchpadMode = (newMode == HidMouseManager.MODE_TOUCHPAD)
+                updateStatusText()
+
+                val modeName = when (newMode) {
+                    HidMouseManager.MODE_TOUCHPAD -> "【智能高精度触控板】(推荐)"
+                    HidMouseManager.MODE_COMBO -> "【外接键盘+鼠标】复合模式"
+                    else -> "【传统纯鼠标】标准模式"
+                }
                 AlertDialog.Builder(this)
-                    .setTitle("复合模式提示")
-                    .setMessage("已切换为【外接键盘+鼠标】复合模式。\n\n⚠️ 重要提示：\n由于平板系统会缓存蓝牙 HID 描述符，开启后强烈建议进入平板【蓝牙设置】，将手机【取消配对 / 忽略设备】后再重新配对连接！\n否则可能因平板使用旧描述符导致鼠标坐标轴错位或乱窜。")
+                    .setTitle("工作模式切换提示")
+                    .setMessage("已切换为 $modeName。\n\n⚠️ 重要提示：\n由于平板系统会强缓存蓝牙 HID 描述符，更换模式后强烈建议进入平板【蓝牙设置】，将手机【取消配对 / 忽略设备】后再重新配对连接！\n否则可能因平板使用旧模式描述符导致光标错位或无法识别触控手势。")
                     .setPositiveButton("知道了", null)
                     .show()
-            } else {
-                Toast.makeText(this, "已切换为【纯鼠标】标准模式（最稳定，推荐）", Toast.LENGTH_SHORT).show()
             }
         }
 
-        // Wheel Direction (Natural vs Inverted)
+        // Touchpad Two-Finger Scroll Direction (Natural vs Inverted)
+        binding.rgTouchpadScrollDirection.setOnCheckedChangeListener { _, checkedId ->
+            val natural = (checkedId == R.id.rbTouchpadScrollNatural)
+            binding.touchpadView.isNaturalScroll = natural
+            binding.landTouchpadView.isNaturalScroll = natural
+            binding.landSplitTouchpad.isNaturalScroll = natural
+            prefs.edit().putBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, natural).apply()
+        }
+
+        // Wheel Bar Direction (Natural vs Inverted)
         binding.rgWheelDirection.setOnCheckedChangeListener { _, checkedId ->
             val natural = (checkedId == R.id.rbWheelNatural)
             binding.wheelBarView.isNaturalDirection = natural
+            binding.landWheelBarView.isNaturalDirection = natural
             prefs.edit().putBoolean(KEY_WHEEL_DIRECTION, natural).apply()
         }
 
@@ -467,26 +790,69 @@ class MainActivity : AppCompatActivity() {
             openSplitScreenSettings()
         }
 
+        // Anti-Screenshot protection Switch
+        binding.switchAntiScreenshot.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(KEY_ANTI_SCREENSHOT, isChecked).apply()
+            applyAntiScreenshot(isChecked)
+            val tip = if (isChecked) "已开启触控板防截屏保护" else "已关闭触控板防截屏保护"
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
+        }
+
+        // Right Edge Back mapping Switch
+        binding.switchRightEdgeBack.setOnCheckedChangeListener { _, isChecked ->
+            isRightEdgeBackEnabled = isChecked
+            prefs.edit().putBoolean(KEY_RIGHT_EDGE_BACK, isChecked).apply()
+            binding.wheelBarView.isSystemGestureExclusionEnabled = !isChecked
+            val tip = if (isChecked) "已开启手机右侧返回映射平板返回键" else "已恢复手机右侧默认返回行为"
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
+        }
+
+        // Open Phone System Screenshot Settings button
+        binding.btnOpenScreenshotSettings.setOnClickListener {
+            openScreenshotSettings()
+        }
+
+        // Recents shortcut mode RadioGroup listener (Overview vs Alt+Tab vs Win+Tab)
+        val savedShortcut = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_RECENTS_OVERVIEW)
+        when (savedShortcut) {
+            SHORTCUT_ALT_TAB -> binding.rbShortcutAltTab.isChecked = true
+            SHORTCUT_WIN_TAB -> binding.rbShortcutWinTab.isChecked = true
+            else -> binding.rbShortcutOverview.isChecked = true
+        }
+
+        binding.rgRecentsShortcut.setOnCheckedChangeListener { _, checkedId ->
+            val shortcut = when (checkedId) {
+                R.id.rbShortcutAltTab -> SHORTCUT_ALT_TAB
+                R.id.rbShortcutWinTab -> SHORTCUT_WIN_TAB
+                else -> SHORTCUT_RECENTS_OVERVIEW
+            }
+            prefs.edit().putString(KEY_RECENTS_SHORTCUT, shortcut).apply()
+        }
+
         // 软键盘退格与回车拦截监听（解决手机软键盘在输入框为空时点击删除或回车无法转发至平板的问题）
+        // 软键盘输入与编辑拦截监听（捕获候选词/推荐词上屏、空输入框退格与回车转发至平板）
         binding.etInput.keyEventListener = object : cn.moonify.aircursor.ui.RemoteEditText.KeyEventListener {
+            override fun onTextCommitted(text: String) {
+                sendTextToTablet(text)
+            }
+
             override fun onEmptyBackspace() {
                 binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+                }
             }
 
             override fun onEnterPressed() {
                 binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                val currentText = binding.etInput.text?.toString() ?: ""
-                if (currentText.isNotEmpty()) {
-                    sendTextToTablet(currentText)
-                    isInternalClearing = true
-                    binding.etInput.text?.clear()
-                    isInternalClearing = false
-                } else {
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
                     hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
                     rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
                 }
+                binding.etInput.text?.clear()
             }
 
             override fun onInputCancelled() {
@@ -496,26 +862,41 @@ class MainActivity : AppCompatActivity() {
 
         // 输入栏焦点与点击监听：点击输入栏时隐藏上方目标平板和顶部鼠标触控导航栏，取消输入后再恢复
         binding.etInput.setOnFocusChangeListener { _, hasFocus ->
-            setInputModeActive(hasFocus)
+            if (hasFocus) {
+                if (!isInputModeActive) {
+                    binding.etInput.post { setInputModeActive(true) }
+                }
+                showSoftKeyboard()
+                connectionManager.ensureRfcommConnected()
+            }
         }
         binding.etInput.setOnClickListener {
-            setInputModeActive(true)
+            if (!isInputModeActive) {
+                binding.etInput.post { setInputModeActive(true) }
+            }
+            showSoftKeyboard()
+            connectionManager.ensureRfcommConnected()
         }
 
-        // 监听软键盘折叠/收起：当用户关闭软键盘时自动退出输入状态并恢复上方目标平板和鼠标触控栏
+        // 监听软键盘折叠/收起：当用户关闭软键盘时（且软键盘曾经处于展开状态），自动退出输入状态并恢复上方目标平板和鼠标触控栏
         val rootView = binding.root
         rootView.viewTreeObserver.addOnGlobalLayoutListener {
             val r = Rect()
             rootView.getWindowVisibleDisplayFrame(r)
             val screenHeight = rootView.rootView.height
+            if (screenHeight <= 0) return@addOnGlobalLayoutListener
             val keypadHeight = screenHeight - r.bottom
             val isKeyboardOpen = keypadHeight > screenHeight * 0.15
-            if (!isKeyboardOpen && isInputModeActive) {
+
+            if (isKeyboardOpen) {
+                wasKeyboardVisible = true
+            } else if (wasKeyboardVisible && isInputModeActive) {
+                // 仅当软键盘曾经弹起且现在已关闭时，才触发退出输入模式
                 dismissInput()
             }
         }
 
-        // 软键盘回车/完成监听：当手机软键盘点击“完成/发送”或 Enter 键时，确保文本即时发送或转发物理回车
+        // 软键盘回车/完成监听：当手机软键盘点击“完成/发送”或 Enter 键时，确保转发物理回车
         binding.etInput.setOnEditorActionListener { _, actionId, event ->
             if (actionId == EditorInfo.IME_ACTION_DONE ||
                 actionId == EditorInfo.IME_ACTION_SEND ||
@@ -523,68 +904,49 @@ class MainActivity : AppCompatActivity() {
                 actionId == EditorInfo.IME_ACTION_SEARCH ||
                 actionId == EditorInfo.IME_ACTION_NEXT ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
-                val currentText = binding.etInput.text?.toString() ?: ""
-                if (currentText.isNotEmpty()) {
-                    sendTextToTablet(currentText)
-                    isInternalClearing = true
-                    binding.etInput.text?.clear()
-                    isInternalClearing = false
-                } else {
-                    binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                binding.etInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
                     hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
                     rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
                 }
+                binding.etInput.text?.clear()
                 true
             } else {
                 false
             }
         }
 
-        // Core Chinese Input Logic: Preventing Pinyin Composing Truncation
-        binding.etInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-
-            override fun afterTextChanged(s: Editable?) {
-                if (isInternalClearing || s.isNullOrEmpty()) return
-
-                // 核心防截断机制：
-                // 必须先通过 BaseInputConnection.getComposingSpanStart(s) == -1 判断当前是否处于拼音组词状态！
-                val composingStart = BaseInputConnection.getComposingSpanStart(s)
-                if (composingStart == -1) {
-                    val textToSend = s.toString()
-                    if (textToSend.isNotEmpty()) {
-                        sendTextToTablet(textToSend)
-
-                        isInternalClearing = true
-                        s.clear()
-                        isInternalClearing = false
-                    }
-                }
-            }
-        })
-
     }
 
     /**
-     * 智能双通道发送文本至平板：
-     * 1. 串口已连接时：走 RFCOMM SPP 直接落字（适合平板运行 AirCursor 输入法，100% 原始 UTF-8 字符精准上屏）；
-     * 2. 串口未开启/未连接时（走 HID 直连）：自动将中文转译为拼音击键并映射中英文标点，模拟外接物理键盘无缝触发 vivo 等平板候选栏与上屏；
-     * 3. 纯鼠标模式且串口未连接时：友好弹出 Toast 提示开启复合模式。
+     * 智能多通道发送文本至平板：
+     * 1. 串口已连接时（免切输入法直通 / 方案B）：
+     *    手机通过 RFCOMM 将文本送达平板系统剪贴板，平板回复 ACK_PASTE 后手机立即通过 HID 发送 Ctrl+V 触发精准粘贴！
+     *    （若平板开启了 AirCursor 输入法，则由 IME 直接 commitText 落字，零延迟 100% 绝对精准）；
+     * 2. 串口未连接时（走 HID 直连 / 方案C）：零延迟直接将中文转译为拼音击键并映射中英文标点；
+     * 3. 纯鼠标模式且串口未连接时：提示开启外接键盘复合模式或在平板端开启 AirCursor。
      */
     private fun sendTextToTablet(text: String) {
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
 
         if (rfConnected) {
-            rfcommClientManager.sendText(text)
+            rfcommClientManager.sendText(text) { ack ->
+                if (ack == RfcommConstants.ACK_PASTE) {
+                    // 平板端已将原始文本安全写入系统剪贴板，手机立即发送物理 Ctrl+V 触发精准粘贴！
+                    hidMouseManager.sendPasteShortcut()
+                }
+                // 若 ack == ACK_COMMITTED，说明平板使用 AirCursor 输入法并已由 IME commitText 直接上屏，无需发送 Ctrl+V
+            }
         } else if (hidConnected && hidMouseManager.isComboMode) {
+            // 剪贴板中继未连接时，零延迟立刻走 HID 拼音模拟打字，绝不添加任何延迟死等！
             hidMouseManager.sendChineseTextAsPinyin(text)
         } else if (hidConnected && !hidMouseManager.isComboMode) {
             Toast.makeText(
                 this,
-                "当前为纯鼠标模式。输入中文请在设置中开启【外接键盘复合模式】或在平板启用 AirCursor 输入法",
-                Toast.LENGTH_LONG
+                "当前为纯鼠标模式。输入文字请在设置中开启【外接键盘复合模式】或在平板开启 AirCursor",
+                Toast.LENGTH_SHORT
             ).show()
         } else {
             Toast.makeText(this, "未连接平板设备，无法发送文本", Toast.LENGTH_SHORT).show()
@@ -593,6 +955,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (orientationEventListener?.canDetectOrientation() == true) {
+            orientationEventListener?.enable()
+        }
         if (connectionManager.isInitialized) {
             updateStatusText()
             refreshPairedDevices()
@@ -600,6 +965,11 @@ class MainActivity : AppCompatActivity() {
                 connectionManager.autoConnectLastDevice(this)
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        orientationEventListener?.disable()
     }
 
     private fun checkAndRequestPermissions() {
@@ -636,6 +1006,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onPermissionsGranted() {
+        TabletRfcommServer.start(applicationContext)
         connectionManager.init(applicationContext)
         refreshPairedDevices()
         // 每次打开时，尝试自动连接上次已连接成功的设备
@@ -719,7 +1090,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val modeTag = if (hidMouseManager.isComboMode) "HID键盘鼠标" else "HID纯鼠标"
+        val modeTag = when (hidMouseManager.hidMode) {
+            HidMouseManager.MODE_TOUCHPAD -> "HID智能触控板"
+            HidMouseManager.MODE_COMBO -> "HID键盘鼠标"
+            else -> "HID纯鼠标"
+        }
         val hidState = hidMouseManager.connectionState
         val hidStateStr = when (hidState) {
             BluetoothProfile.STATE_CONNECTED -> "$modeTag: 已连接"
@@ -729,17 +1104,23 @@ class MainActivity : AppCompatActivity() {
 
         val rfState = rfcommClientManager.connectionState
         val rfStateStr = when (rfState) {
-            RfcommClientManager.STATE_CONNECTED -> "串口通道: 已连接"
-            RfcommClientManager.STATE_CONNECTING -> "串口通道: 连接中…"
-            else -> if (hidMouseManager.isComboMode) "串口: 未开启(走HID直连)" else "串口通道: 未连接"
+            RfcommClientManager.STATE_CONNECTED -> "剪贴板直通: 已连接"
+            RfcommClientManager.STATE_CONNECTING -> "剪贴板通道: 探测中…"
+            else -> if (TabletRfcommServer.isRunning && TabletRfcommServer.connectedClientCount > 0) {
+                "平板接收中继: 已连${TabletRfcommServer.connectedClientCount}台设备"
+            } else if (hidMouseManager.isComboMode) {
+                "剪贴板通道: 未开启(走HID拼音)"
+            } else {
+                "剪贴板通道: 未开启"
+            }
         }
 
         val fullStatus = "$hidStateStr  |  $rfStateStr"
         binding.tvStatus.text = fullStatus
 
-        if (hidState == BluetoothProfile.STATE_CONNECTED) {
+        if (hidState == BluetoothProfile.STATE_CONNECTED || (TabletRfcommServer.isRunning && TabletRfcommServer.connectedClientCount > 0)) {
             binding.tvStatus.setTextColor(Color.parseColor("#10B981")) // Green
-        } else if (hidState == BluetoothProfile.STATE_CONNECTING || rfState == RfcommClientManager.STATE_CONNECTING) {
+        } else if (hidState == BluetoothProfile.STATE_CONNECTING) {
             binding.tvStatus.setTextColor(Color.parseColor("#F59E0B")) // Amber
         } else {
             binding.tvStatus.setTextColor(Color.parseColor("#EF4444")) // Red
@@ -766,14 +1147,12 @@ class MainActivity : AppCompatActivity() {
             val name = activeDevice?.let {
                 try { it.name } catch (_: Exception) { null } ?: it.address
             } ?: "平板设备"
-            val attempt = connectionManager.reconnectAttempt
-            val max = AirCursorConnectionManager.MAX_RECONNECT_ATTEMPTS
-            binding.tvPropDevice.text = "正在重连: $name ($attempt/$max)"
+            binding.tvPropDevice.text = "正在重连: $name"
             binding.btnPropAction.text = getString(R.string.prop_btn_disconnect)
             binding.btnPropAction.setOnClickListener { disconnectAll() }
         } else if (activeDevice != null && isAnyConnected) {
             val name = try { activeDevice.name } catch (_: Exception) { null } ?: "平板设备"
-            binding.tvPropDevice.text = "$name (${activeDevice.address})"
+            binding.tvPropDevice.text = name
             binding.btnPropAction.text = getString(R.string.prop_btn_disconnect)
             binding.btnPropAction.setOnClickListener { disconnectAll() }
         } else if (isAnyConnecting) {
@@ -810,11 +1189,46 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. Combo mode Badge
-        if (hidMouseManager.isComboMode) {
-            updateBadge(binding.tvBadgeCombo, "⌨ 物理键盘开启", R.color.primary, R.color.tab_bg)
+        // 3. Mode Badge：保持主触控界面模式徽章稳定，绝不在后台探测时狂闪黄灯
+        val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        when {
+            TabletRfcommServer.isRunning && TabletRfcommServer.connectedClientCount > 0 -> {
+                updateBadge(binding.tvBadgeCombo, "📱 平板中继 (${TabletRfcommServer.connectedClientCount}台已连)", R.color.accent_green, R.color.accent_green_bg)
+            }
+            rfConnected -> {
+                updateBadge(binding.tvBadgeCombo, "⚡ 剪贴板直通 (100%精准)", R.color.accent_green, R.color.accent_green_bg)
+            }
+            hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD -> {
+                updateBadge(binding.tvBadgeCombo, "✨ 智能触控板", R.color.primary, R.color.tab_bg)
+            }
+            hidMouseManager.hidMode == HidMouseManager.MODE_COMBO -> {
+                updateBadge(binding.tvBadgeCombo, "⌨ 拼音模拟打字", R.color.primary, R.color.tab_bg)
+            }
+            else -> {
+                updateBadge(binding.tvBadgeCombo, "🖱 纯鼠标模式", R.color.badge_gray_text, R.color.badge_gray_bg)
+            }
+        }
+
+        // 4. Update Landscape Status Pill and Drawer Status
+        if (isAnyConnected) {
+            val devName = try { activeDevice?.name } catch (_: Exception) { null } ?: "平板设备"
+            binding.tvLandStatusText.text = "已连接"
+            binding.tvLandStatusText.setTextColor(ContextCompat.getColor(this, R.color.land_key_text))
+            binding.ivLandStatusBt.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent_green))
+            binding.tvDrawerDeviceName.text = "已连接: $devName"
+            binding.btnDrawerDisconnect.text = "断开蓝牙连接"
+        } else if (isAnyConnecting || isReconnecting) {
+            binding.tvLandStatusText.text = "连接中..."
+            binding.tvLandStatusText.setTextColor(ContextCompat.getColor(this, R.color.accent_amber))
+            binding.ivLandStatusBt.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent_amber))
+            binding.tvDrawerDeviceName.text = "正在连接平板..."
+            binding.btnDrawerDisconnect.text = "取消连接"
         } else {
-            updateBadge(binding.tvBadgeCombo, "🖱 纯鼠标模式", R.color.badge_gray_text, R.color.badge_gray_bg)
+            binding.tvLandStatusText.text = "未连接"
+            binding.tvLandStatusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.ivLandStatusBt.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.badge_gray_text))
+            binding.tvDrawerDeviceName.text = getString(R.string.prop_device_none)
+            binding.btnDrawerDisconnect.text = "连接平板设备"
         }
     }
 
@@ -833,15 +1247,16 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("平板使用模式说明")
             .setMessage(
-                "本应用支持两种平板工作模式：\n\n" +
-                "【模式一：推荐！保留 vivo 默认输入法】\n" +
-                "1. 平板保持系统默认的【vivo 输入法】（无需切换）；\n" +
-                "2. 手机端开启【物理外接键盘模式】并连接平板；\n" +
-                "3. 平板识别到外接物理键盘后，点击任何输入框均不会弹出全尺寸软键盘，而是自动弹出 vivo 专属的外接键盘悬浮候选栏与快捷条，光标正常闪烁！\n\n" +
-                "【模式二：AirCursor 极简直接上屏模式】\n" +
+                "本应用支持三种打字工作模式：\n\n" +
+                "【模式一：推荐！免切输入法 100% 精准直通 (方案B)】\n" +
+                "1. 平板无需切换输入法，继续保留系统默认的【vivo 输入法】；\n" +
+                "2. 平板端打开 AirCursor（后台保持运行），手机连接后顶部将亮起【⚡ 剪贴板直通 (100%精准)】徽章；\n" +
+                "3. 手机端输入任何中文、生僻字、标点符号、中英混排，均通过蓝牙剪贴板中继 + 自动 Ctrl+V 毫秒级精准落字，零错别字！\n\n" +
+                "【模式二：AirCursor 极简直接上屏模式 (方案A)】\n" +
                 "1. 在平板【语言与输入法】中将默认输入法切换为【AirCursor】；\n" +
-                "2. 已修复点击输入框无光标问题（已更新为 1px 响应视图）；\n" +
-                "3. 点击输入框正常出现闪烁光标，且屏幕完全无键盘遮挡，手机端输入中文直接落字上屏！"
+                "2. 点击输入框正常出现闪烁光标，且屏幕无键盘遮挡，手机输入直接通过底层接口落字上屏。\n\n" +
+                "【模式三：纯 HID 物理外接键盘模式 (方案C)】\n" +
+                "平板未安装 AirCursor 时的直连模式：自动通过拼音转译模拟物理键盘击键并按空格选词上屏。"
             )
             .setPositiveButton(getString(R.string.enable_ime_btn)) { _, _ ->
                 val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
@@ -856,30 +1271,98 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 处理三指上滑手势：回到平板后台应用选择界面 (Overview / Recent Tasks)
+     * 处理三指上滑与三指轻点手势：呼出平板后台多任务概览卡片，并停留在后台界面供用户自主选择应用
      */
-    private fun handleThreeFingerSwipeUp() {
+    private fun handleThreeFingerOverview(gestureName: String) {
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        val shortcutMode = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_RECENTS_OVERVIEW) ?: SHORTCUT_RECENTS_OVERVIEW
 
         if (hidConnected && hidMouseManager.isComboMode) {
-            hidMouseManager.sendRecentApps()
-            if (rfConnected) {
-                rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
+            hidMouseManager.sendOverview(shortcutMode)
+            val tip = when (shortcutMode) {
+                SHORTCUT_ALT_TAB -> "$gestureName：已发送 Alt+Tab 切换应用"
+                SHORTCUT_WIN_TAB -> "$gestureName：已发送 Win+Tab 切换任务视图"
+                else -> "$gestureName：已呼出平板后台多任务界面并停留"
             }
-            Toast.makeText(this, "三指上滑：已触发平板后台任务界面", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
+        } else if (hidConnected && !hidMouseManager.isComboMode) {
+            showEnableComboModeDialog(gestureName)
         } else if (rfConnected) {
             rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-            Toast.makeText(this, "三指上滑：已通过串口触发平板后台任务", Toast.LENGTH_SHORT).show()
-        } else if (hidConnected && !hidMouseManager.isComboMode) {
-            Toast.makeText(
-                this,
-                "三指上滑回到平板后台需在【功能设置】开启【外接键盘复合模式】",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(this, "$gestureName：已通过串口呼出平板后台多任务界面", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * 处理三指横滑手势：直接在应用间快速切换（右滑下一个应用，左滑上一个应用）
+     */
+    private fun handleDirectAppSwitch(direction: Int) {
+        val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
+        val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        val shortcutMode = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_RECENTS_OVERVIEW) ?: SHORTCUT_RECENTS_OVERVIEW
+        val useAltTab = (shortcutMode != SHORTCUT_WIN_TAB)
+        val reverse = (direction < 0)
+        val desc = if (reverse) "三指左滑" else "三指右滑"
+
+        if (hidConnected && hidMouseManager.isComboMode) {
+            hidMouseManager.sendRecentApps(useAltTab, reverse)
+            val shortcutDesc = if (useAltTab) {
+                if (reverse) "Alt + Shift + Tab" else "Alt + Tab"
+            } else {
+                if (reverse) "Win + Shift + Tab" else "Win + Tab"
+            }
+            Toast.makeText(this, "$desc：已发送 $shortcutDesc 切换应用", Toast.LENGTH_SHORT).show()
+        } else if (hidConnected && !hidMouseManager.isComboMode) {
+            showEnableComboModeDialog(desc)
+        } else if (rfConnected) {
+            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
+            Toast.makeText(this, "$desc：已通过串口切换应用", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showEnableComboModeDialog(gestureName: String) {
+        AlertDialog.Builder(this)
+            .setTitle("需开启外接键盘模式")
+            .setMessage(
+                "检测到已触发【$gestureName】，控制平板软件界面需要发送实体键盘/多任务快捷指令。\n\n" +
+                "当前处于【纯鼠标模式】（仅发送鼠标报文，不包含键盘/多任务通道）。\n\n" +
+                "是否立即切换为【外接键盘+鼠标复合模式】？\n\n" +
+                "💡 提示：开启复合模式后，如平板鼠标坐标出现漂移，进入平板蓝牙设置将手机【取消配对】再重新连接一次即可恢复正常。"
+            )
+            .setPositiveButton("立即开启") { _, _ ->
+                binding.rbModeCombo.isChecked = true
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 打开手机系统截屏手势设置，方便用户彻底关闭系统全局的三指下滑截屏手势
+     */
+    private fun openScreenshotSettings() {
+        val targetIntents = listOf(
+            Intent().setClassName("com.vivo.upslide", "com.vivo.upslide.setting.SCaptureSettingActivity"),
+            Intent().setClassName("com.vivo.upslide", "com.vivo.upslide.setting.SuperCaptureSettingActivity"),
+            Intent().setClassName("com.android.settings", "com.android.settings.Settings\$ShortcutsAndAccessibilityActivity"),
+            Intent("com.vivo.settings.SHORTCUT_ACCESSIBILITY_SETTINGS"),
+            Intent("miui.intent.action.GESTURE_SETTINGS"),
+            Intent().setClassName("com.miui.securitycenter", "com.miui.gesture.GestureSettingsActivity"),
+            Intent().setClassName("com.oplus.gesture", "com.oplus.gesture.GestureSettingsActivity"),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        for (intent in targetIntents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return
+            } catch (_: Exception) {}
+        }
+        Toast.makeText(this, "请前往手机【系统设置 -> 快捷与辅助 -> 超级截屏】中关闭三指下滑截屏", Toast.LENGTH_LONG).show()
     }
 
     /**
@@ -902,9 +1385,909 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "请前往手机【系统设置 -> 快捷与辅助 -> 分屏多任务】中关闭三指分屏", Toast.LENGTH_LONG).show()
     }
 
+    private fun launchBlackScreenMode() {
+        val dontShow = prefs.getBoolean(KEY_DONT_SHOW_BLACK_SCREEN_DIALOG, false)
+        if (dontShow) {
+            startActivity(Intent(this, BlackScreenTouchpadActivity::class.java))
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("进入全屏黑屏触控板模式")
+            .setMessage(
+                "【黑屏触控特性】\n" +
+                "• 界面将转为 100% 纯黑无光状态，并将屏幕调至最低微光极限，OLED 屏幕像素完全熄灭，极度省电且暗光不刺眼；\n" +
+                "• 整块手机屏幕均为触控板无边界感应区，手指滑动毫无局限；\n" +
+                "• 单指移动、轻触左键、双指右键/滚轮平移、三指多任务等全部功能正常使用。\n\n" +
+                "【如何退出黑屏模式】\n" +
+                "• 按手机返回键 / 侧滑返回；\n" +
+                "• 按手机侧面任意音量键；\n" +
+                "• 或在屏幕上四指同时轻点一次即可退出。"
+            )
+            .setPositiveButton("立即进入") { _, _ ->
+                startActivity(Intent(this, BlackScreenTouchpadActivity::class.java))
+            }
+            .setNeutralButton("不再提示并进入") { _, _ ->
+                prefs.edit().putBoolean(KEY_DONT_SHOW_BLACK_SCREEN_DIALOG, true).apply()
+                startActivity(Intent(this, BlackScreenTouchpadActivity::class.java))
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun createTouchpadCallback(): cn.moonify.aircursor.ui.TouchpadView.Callback {
+        return object : cn.moonify.aircursor.ui.TouchpadView.Callback {
+            override fun onMove(dx: Int, dy: Int) {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0, 0)
+            }
+
+            override fun onTap() {
+                if (isInputModeActive) dismissInput()
+                val downState = currentButtonState or HidMouseManager.BUTTON_LEFT
+                hidMouseManager.sendMouseReport(downState, 0, 0, 0, 0)
+                mainHandler.postDelayed({
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                }, 20)
+            }
+
+            override fun onSecondaryTap() {
+                if (isInputModeActive) dismissInput()
+                val downState = currentButtonState or HidMouseManager.BUTTON_RIGHT
+                hidMouseManager.sendMouseReport(downState, 0, 0, 0, 0)
+                mainHandler.postDelayed({
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                }, 20)
+            }
+
+            override fun onDragStart() {
+                if (isInputModeActive) dismissInput()
+                currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+            }
+
+            override fun onDragMove(dx: Int, dy: Int) {
+                hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0, 0)
+            }
+
+            override fun onDragEnd() {
+                currentButtonState = currentButtonState and HidMouseManager.BUTTON_LEFT.inv()
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+            }
+
+            override fun onScroll(wheel: Int, pan: Int) {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel, pan)
+            }
+
+            override fun onThreeFingerSwipeUp() {
+                if (isInputModeActive) dismissInput()
+                handleThreeFingerOverview("三指上滑")
+            }
+
+            override fun onThreeFingerSwipeDown() {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_HOME)
+            }
+
+            override fun onThreeFingerHorizontalSwipe(direction: Int) {
+                if (isInputModeActive) dismissInput()
+                handleDirectAppSwitch(direction)
+            }
+
+            override fun onThreeFingerTap() {
+                if (isInputModeActive) dismissInput()
+                handleThreeFingerOverview("三指轻点")
+            }
+
+            override fun onFourFingerTap() {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_HOME)
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val isLand = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+        applyOrientationMode(isLand)
+    }
+
+    private fun enterLandscapeMode() {
+        lastManualExitTime = 0L
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        applyOrientationMode(true)
+    }
+
+    private fun exitLandscapeMode(isFromSensor: Boolean = false) {
+        if (!isFromSensor) {
+            lastManualExitTime = SystemClock.uptimeMillis()
+        }
+        setKeyboardAdjustMode(false)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        mainHandler.postDelayed({
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }, 1200)
+        applyOrientationMode(false)
+    }
+
+    private fun applyOrientationMode(isLand: Boolean) {
+        isLandscapeMode = isLand
+
+        // 彻底消除横屏下系统状态栏与导航栏残留的空白横条，全屏完全沉浸
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        if (isLand) {
+            // 横屏下关闭 decorFitsSystemWindows，使画面真正 100% 铺满到物理玻璃边缘
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
+        } else {
+            // 竖屏下恢复 decorFitsSystemWindows，确保竖屏状态栏正常沉浸且不与内容重叠
+            setKeyboardAdjustMode(false)
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
+            val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            val barColor = ContextCompat.getColor(this, if (isNight) R.color.bg_dark else R.color.bg_dark)
+            window.statusBarColor = barColor
+            window.navigationBarColor = barColor
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
+
+        if (isLand) {
+            binding.layoutPortraitContainer.visibility = View.GONE
+            binding.layoutLandscapeContainer.visibility = View.VISIBLE
+
+            // 同步触控板灵敏度与设置
+            val savedTouchpadSens = prefs.getFloat(KEY_TOUCHPAD_SENS, 1.2f)
+            val savedTwoFingerSens = prefs.getFloat(KEY_TWO_FINGER_SENS, 1.2f)
+            val savedNatural = prefs.getBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, true)
+            binding.landTouchpadView.sensitivity = savedTouchpadSens
+            binding.landTouchpadView.scrollSensitivity = savedTwoFingerSens
+            binding.landTouchpadView.isNaturalScroll = savedNatural
+
+            binding.landSplitTouchpad.sensitivity = savedTouchpadSens
+            binding.landSplitTouchpad.scrollSensitivity = savedTwoFingerSens
+            binding.landSplitTouchpad.isNaturalScroll = savedNatural
+
+            val savedWheelSens = prefs.getFloat(KEY_WHEEL_SENS, 0.2f)
+            val savedWheelNatural = prefs.getBoolean(KEY_WHEEL_DIRECTION, true)
+            binding.landWheelBarView.isCapsuleStyle = true
+            binding.landWheelBarView.sensitivity = savedWheelSens
+            binding.landWheelBarView.isNaturalDirection = savedWheelNatural
+
+            switchLandscapeTab(isLandscapeKeyboardActive)
+            updateLandscapeVisibilitySettings()
+        } else {
+            binding.layoutLandscapeContainer.visibility = View.GONE
+            binding.layoutPortraitContainer.visibility = View.VISIBLE
+            dismissLandscapeInput()
+            if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                binding.drawerLayout.closeDrawer(GravityCompat.START)
+            }
+        }
+        updateStatusText()
+    }
+
+    private fun switchLandscapeTab(isKeyboard: Boolean) {
+        isLandscapeKeyboardActive = isKeyboard
+        if (!isKeyboard) {
+            // 鼠标触控模式激活
+            binding.btnLandTabMouse.setBackgroundResource(R.drawable.bg_land_active_tab)
+            binding.ivLandTabMouse.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_active_icon))
+
+            binding.btnLandTabKeyboard.setBackgroundColor(Color.TRANSPARENT)
+            binding.ivLandTabKeyboard.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_inactive_icon))
+
+            binding.landTouchpadView.visibility = View.VISIBLE
+            binding.layoutLandKeyboardCardWrapper.visibility = View.GONE
+            binding.btnLandAdjustKeyboard.visibility = View.GONE
+            setKeyboardAdjustMode(false)
+            binding.layoutLandSplit.visibility = View.GONE
+            dismissLandscapeInput()
+            updateLandscapeVisibilitySettings()
+        } else {
+            // 键盘模式激活
+            binding.btnLandTabKeyboard.setBackgroundResource(R.drawable.bg_land_active_tab)
+            binding.ivLandTabKeyboard.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_active_icon))
+
+            binding.btnLandTabMouse.setBackgroundColor(Color.TRANSPARENT)
+            binding.ivLandTabMouse.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_inactive_icon))
+
+            // 键盘打字时隐藏底部按键与滚轮，避免重叠干扰
+            binding.layoutLandMouseButtons.visibility = View.GONE
+            binding.layoutLandWheelContainer.visibility = View.GONE
+
+            val kbMode = prefs.getString(KEY_LANDSCAPE_KEYBOARD_MODE, KEYBOARD_MODE_FULLSCREEN_HW) ?: KEYBOARD_MODE_FULLSCREEN_HW
+            if (kbMode == KEYBOARD_MODE_FULLSCREEN_HW) {
+                // 模式 1：独立卡片式实体模拟键盘 (支持调节大小与位置)
+                binding.landTouchpadView.visibility = View.GONE
+                binding.layoutLandSplit.visibility = View.GONE
+                binding.layoutLandKeyboardCardWrapper.visibility = View.VISIBLE
+                binding.btnLandAdjustKeyboard.visibility = View.VISIBLE
+                dismissLandscapeInput()
+                applyKeyboardCardLayout()
+            } else {
+                // 模式 2：半屏/分屏键盘 (触控板 + 手机系统输入法)
+                binding.landTouchpadView.visibility = View.GONE
+                binding.layoutLandKeyboardCardWrapper.visibility = View.GONE
+                binding.btnLandAdjustKeyboard.visibility = View.GONE
+                setKeyboardAdjustMode(false)
+                binding.layoutLandSplit.visibility = View.VISIBLE
+                applySplitSwap()
+                applySplitWidth()
+                showLandscapeSoftKeyboard()
+            }
+        }
+    }
+
+    private fun updateLandscapeVisibilitySettings() {
+        val showScrollbar = prefs.getBoolean(KEY_LANDSCAPE_SHOW_SCROLLBAR, false)
+        val showButtons = prefs.getBoolean(KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS, false)
+
+        if (!isLandscapeKeyboardActive) {
+            binding.layoutLandWheelContainer.visibility = if (showScrollbar) View.VISIBLE else View.GONE
+            binding.layoutLandMouseButtons.visibility = if (showButtons) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun showLandscapeSoftKeyboard() {
+        binding.etSplitInput.requestFocus()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(binding.etSplitInput, InputMethodManager.SHOW_IMPLICIT)
+        connectionManager.ensureRfcommConnected()
+    }
+
+    private fun dismissLandscapeInput() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(binding.etSplitInput.windowToken, 0)
+        binding.etSplitInput.clearFocus()
+    }
+
+    private fun setupLandscape() {
+        // 1. 触控板回调配置 (全屏主触控板与分屏触控板)
+        binding.landTouchpadView.callback = createTouchpadCallback()
+        binding.landSplitTouchpad.callback = createTouchpadCallback()
+
+        // 2. 垂直胶囊滚轮配置
+        binding.landWheelBarView.isCapsuleStyle = true
+        binding.landWheelBarView.callback = object : cn.moonify.aircursor.ui.WheelBarView.Callback {
+            override fun onWheel(wheel: Int) {
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel, 0)
+            }
+        }
+
+        // 3. 全屏仿真实体键盘：直发 HID 键码发送
+        binding.landVirtualKeyboard.onKeySendListener = { keycode, modifier ->
+            hidMouseManager.sendKeyboardKey(keycode, modifier)
+        }
+
+        // 4. 顶部操作栏
+        // 汉堡菜单：呼出侧边抽屉
+        binding.btnLandMenu.setOnClickListener {
+            binding.drawerLayout.openDrawer(GravityCompat.START)
+        }
+
+        // 连接状态胶囊：点击可断开或连接
+        binding.btnLandStatus.setOnClickListener {
+            if (connectionManager.isConnectedOrConnecting()) {
+                val activeDevice = connectionManager.getActiveDevice()
+                val name = try { activeDevice?.name } catch (_: Exception) { null } ?: "平板设备"
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.disconnect_dialog_title)
+                    .setMessage("确定要断开与当前【$name】的蓝牙连接吗？")
+                    .setPositiveButton(R.string.disconnect_dialog_confirm) { _, _ ->
+                        disconnectAll()
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } else {
+                if (pairedDevices.isNotEmpty()) {
+                    connectToSelectedDevice()
+                } else {
+                    binding.drawerLayout.openDrawer(GravityCompat.START)
+                }
+            }
+        }
+
+        // 鼠标 / 键盘模式切换分段器
+        binding.btnLandTabMouse.setOnClickListener {
+            switchLandscapeTab(false)
+        }
+        binding.btnLandTabKeyboard.setOnClickListener {
+            switchLandscapeTab(true)
+        }
+
+        // 退出横屏按钮
+        binding.btnLandExit.setOnClickListener {
+            exitLandscapeMode(isFromSensor = false)
+        }
+
+        // 5. 底部实体鼠标左右键交互 (真实 Touch Down / Up 事件)
+        binding.btnLandLeftClick.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    currentButtonState = currentButtonState and HidMouseManager.BUTTON_LEFT.inv()
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        binding.btnLandRightClick.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    currentButtonState = currentButtonState or HidMouseManager.BUTTON_RIGHT
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    currentButtonState = currentButtonState and HidMouseManager.BUTTON_RIGHT.inv()
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 6. 分屏键盘控件配置
+        setupSplitControls()
+
+        // 7. 设置项双向同步与抽屉配置
+        setupPortraitLandscapeSettings()
+
+        // 8. 初始化当前屏幕方向
+        val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        applyOrientationMode(isLand)
+    }
+
+    private fun setupOrientationSensor() {
+        orientationEventListener = object : OrientationEventListener(this, SensorManager.SENSOR_DELAY_NORMAL) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+
+                val isLandscapeAngle = (orientation in 65..115) || (orientation in 245..295)
+                val isPortraitAngle = (orientation in 0..30) || (orientation in 330..359)
+
+                if (isPortraitAngle) {
+                    lastManualExitTime = 0L
+                }
+
+                if (isLandscapeAngle && !isLandscapeMode) {
+                    val now = SystemClock.uptimeMillis()
+                    if (now - lastManualExitTime < 3000L) return
+
+                    if (pendingSensorOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+                        pendingSensorCount++
+                        if (pendingSensorCount >= 3) {
+                            pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                            pendingSensorCount = 0
+                            enterLandscapeMode()
+                        }
+                    } else {
+                        pendingSensorOrientation = Configuration.ORIENTATION_LANDSCAPE
+                        pendingSensorCount = 1
+                    }
+                } else if (isPortraitAngle && isLandscapeMode) {
+                    if (pendingSensorOrientation == Configuration.ORIENTATION_PORTRAIT) {
+                        pendingSensorCount++
+                        if (pendingSensorCount >= 3) {
+                            pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                            pendingSensorCount = 0
+                            exitLandscapeMode(isFromSensor = true)
+                        }
+                    } else {
+                        pendingSensorOrientation = Configuration.ORIENTATION_PORTRAIT
+                        pendingSensorCount = 1
+                    }
+                } else {
+                    pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                    pendingSensorCount = 0
+                }
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupKeyboardCardAdjustment() {
+        // 顶部“调节键盘”按钮点击：切换调节模式
+        binding.btnLandAdjustKeyboard.setOnClickListener {
+            setKeyboardAdjustMode(!isKeyboardAdjustModeActive)
+        }
+
+        // 调节栏“✓ 完成”按钮
+        binding.btnKeyboardAdjustDone.setOnClickListener {
+            setKeyboardAdjustMode(false)
+        }
+
+        // 调节栏“↺ 还原全屏”按钮
+        binding.btnKeyboardResetFull.setOnClickListener {
+            resetKeyboardToFullScreen()
+        }
+
+        // 1. 拖拽调节栏移动键盘位置 (Drag to Move)
+        var moveTouchStartX = 0f
+        var moveTouchStartY = 0f
+        var cardStartX = 0f
+        var cardStartY = 0f
+
+        val dragTouchListener = View.OnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    moveTouchStartX = event.rawX
+                    moveTouchStartY = event.rawY
+                    cardStartX = binding.cardLandKeyboard.translationX
+                    cardStartY = binding.cardLandKeyboard.translationY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - moveTouchStartX
+                    val dy = event.rawY - moveTouchStartY
+                    val parentW = binding.layoutLandKeyboardCardWrapper.width.toFloat()
+                    val parentH = binding.layoutLandKeyboardCardWrapper.height.toFloat()
+                    val cardW = binding.cardLandKeyboard.width.toFloat()
+                    val cardH = binding.cardLandKeyboard.height.toFloat()
+
+                    val maxX = (parentW - cardW).coerceAtLeast(0f)
+                    val maxY = (parentH - cardH).coerceAtLeast(0f)
+
+                    binding.cardLandKeyboard.translationX = (cardStartX + dx).coerceIn(0f, maxX)
+                    binding.cardLandKeyboard.translationY = (cardStartY + dy).coerceIn(0f, maxY)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    saveKeyboardCustomPositionAndSize()
+                    true
+                }
+                else -> false
+            }
+        }
+        binding.layoutKeyboardAdjustBar.setOnTouchListener(dragTouchListener)
+        binding.tvKeyboardDragHandle.setOnTouchListener(dragTouchListener)
+
+        // 2. 右下角手柄缩放调节 (Resize Bottom-Right)
+        var resizeTouchStartX = 0f
+        var resizeTouchStartY = 0f
+        var startWidth = 0
+        var startHeight = 0
+
+        binding.ivKeyboardResizeCorner.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeTouchStartX = event.rawX
+                    resizeTouchStartY = event.rawY
+                    startWidth = binding.cardLandKeyboard.width
+                    startHeight = binding.cardLandKeyboard.height
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - resizeTouchStartX
+                    val dy = event.rawY - resizeTouchStartY
+                    val parentW = binding.layoutLandKeyboardCardWrapper.width
+                    val parentH = binding.layoutLandKeyboardCardWrapper.height
+
+                    val minW = (parentW * 0.40f).toInt().coerceAtLeast(100)
+                    val maxW = (parentW - binding.cardLandKeyboard.translationX.toInt()).coerceAtLeast(minW)
+                    val minH = (parentH * 0.40f).toInt().coerceAtLeast(100)
+                    val maxH = (parentH - binding.cardLandKeyboard.translationY.toInt()).coerceAtLeast(minH)
+
+                    val newW = (startWidth + dx.toInt()).coerceIn(minW, maxW)
+                    val newH = (startHeight + dy.toInt()).coerceIn(minH, maxH)
+
+                    val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                    lp.width = newW
+                    lp.height = newH
+                    binding.cardLandKeyboard.layoutParams = lp
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    saveKeyboardCustomPositionAndSize()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 3. 左下角手柄缩放调节 (Resize Bottom-Left)
+        var resizeLeftTouchStartX = 0f
+        var resizeLeftTouchStartY = 0f
+        var startLeftWidth = 0
+        var startLeftHeight = 0
+        var startLeftCardX = 0f
+
+        binding.ivKeyboardResizeCornerLeft.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeLeftTouchStartX = event.rawX
+                    resizeLeftTouchStartY = event.rawY
+                    startLeftWidth = binding.cardLandKeyboard.width
+                    startLeftHeight = binding.cardLandKeyboard.height
+                    startLeftCardX = binding.cardLandKeyboard.translationX
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - resizeLeftTouchStartX
+                    val dy = event.rawY - resizeLeftTouchStartY
+                    val parentW = binding.layoutLandKeyboardCardWrapper.width
+                    val parentH = binding.layoutLandKeyboardCardWrapper.height
+
+                    val minW = (parentW * 0.40f).toInt().coerceAtLeast(100)
+                    val minH = (parentH * 0.40f).toInt().coerceAtLeast(100)
+                    val maxH = (parentH - binding.cardLandKeyboard.translationY.toInt()).coerceAtLeast(minH)
+
+                    val clampedNewX = (startLeftCardX + dx).coerceIn(0f, startLeftCardX + startLeftWidth - minW)
+                    val newW = (startLeftWidth + (startLeftCardX - clampedNewX)).toInt().coerceIn(minW, parentW)
+                    val newH = (startLeftHeight + dy.toInt()).coerceIn(minH, maxH)
+
+                    binding.cardLandKeyboard.translationX = clampedNewX
+                    val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                    lp.width = newW
+                    lp.height = newH
+                    binding.cardLandKeyboard.layoutParams = lp
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    saveKeyboardCustomPositionAndSize()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun applyKeyboardCardLayout() {
+        val wrapper = binding.layoutLandKeyboardCardWrapper
+        wrapper.post {
+            val parentW = wrapper.width
+            val parentH = wrapper.height
+            if (parentW <= 0 || parentH <= 0) return@post
+
+            val isCustom = prefs.getBoolean(KEY_KB_CARD_IS_CUSTOM, false)
+            if (!isCustom) {
+                // 默认全屏卡片
+                val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+                lp.height = FrameLayout.LayoutParams.MATCH_PARENT
+                binding.cardLandKeyboard.layoutParams = lp
+                binding.cardLandKeyboard.translationX = 0f
+                binding.cardLandKeyboard.translationY = 0f
+                binding.cardLandKeyboard.radius = if (isKeyboardAdjustModeActive) 12f * resources.displayMetrics.density else 0f
+                binding.cardLandKeyboard.elevation = if (isKeyboardAdjustModeActive) 8f * resources.displayMetrics.density else 0f
+            } else {
+                // 自定义大小与位置
+                val wRatio = prefs.getFloat(KEY_KB_CARD_WIDTH_RATIO, 1.0f).coerceIn(0.40f, 1.0f)
+                val hRatio = prefs.getFloat(KEY_KB_CARD_HEIGHT_RATIO, 1.0f).coerceIn(0.40f, 1.0f)
+                val xRatio = prefs.getFloat(KEY_KB_CARD_POS_X_RATIO, 0.0f).coerceIn(0.0f, 1.0f)
+                val yRatio = prefs.getFloat(KEY_KB_CARD_POS_Y_RATIO, 0.0f).coerceIn(0.0f, 1.0f)
+
+                val targetW = (parentW * wRatio).toInt()
+                val targetH = (parentH * hRatio).toInt()
+                val maxX = (parentW - targetW).coerceAtLeast(0)
+                val maxY = (parentH - targetH).coerceAtLeast(0)
+                val targetX = (parentW * xRatio).coerceIn(0f, maxX.toFloat())
+                val targetY = (parentH * yRatio).coerceIn(0f, maxY.toFloat())
+
+                val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                lp.width = targetW
+                lp.height = targetH
+                binding.cardLandKeyboard.layoutParams = lp
+                binding.cardLandKeyboard.translationX = targetX
+                binding.cardLandKeyboard.translationY = targetY
+                binding.cardLandKeyboard.radius = 12f * resources.displayMetrics.density
+                binding.cardLandKeyboard.elevation = 6f * resources.displayMetrics.density
+            }
+        }
+    }
+
+    private fun saveKeyboardCustomPositionAndSize() {
+        val parentW = binding.layoutLandKeyboardCardWrapper.width.toFloat()
+        val parentH = binding.layoutLandKeyboardCardWrapper.height.toFloat()
+        if (parentW <= 0f || parentH <= 0f) return
+
+        val cardW = binding.cardLandKeyboard.width.toFloat()
+        val cardH = binding.cardLandKeyboard.height.toFloat()
+        val cardX = binding.cardLandKeyboard.translationX
+        val cardY = binding.cardLandKeyboard.translationY
+
+        // 如果与全屏尺寸几乎一致且没有偏移，视为非自定义全屏
+        val isFull = (cardW >= parentW * 0.98f) && (cardH >= parentH * 0.98f) && (cardX <= parentW * 0.02f) && (cardY <= parentH * 0.02f)
+
+        if (isFull) {
+            prefs.edit().putBoolean(KEY_KB_CARD_IS_CUSTOM, false).apply()
+        } else {
+            prefs.edit()
+                .putBoolean(KEY_KB_CARD_IS_CUSTOM, true)
+                .putFloat(KEY_KB_CARD_WIDTH_RATIO, cardW / parentW)
+                .putFloat(KEY_KB_CARD_HEIGHT_RATIO, cardH / parentH)
+                .putFloat(KEY_KB_CARD_POS_X_RATIO, cardX / parentW)
+                .putFloat(KEY_KB_CARD_POS_Y_RATIO, cardY / parentH)
+                .apply()
+        }
+    }
+
+    private fun resetKeyboardToFullScreen() {
+        prefs.edit().putBoolean(KEY_KB_CARD_IS_CUSTOM, false).apply()
+        val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+        lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+        lp.height = FrameLayout.LayoutParams.MATCH_PARENT
+        binding.cardLandKeyboard.layoutParams = lp
+        binding.cardLandKeyboard.translationX = 0f
+        binding.cardLandKeyboard.translationY = 0f
+        binding.cardLandKeyboard.radius = if (isKeyboardAdjustModeActive) 12f * resources.displayMetrics.density else 0f
+        binding.cardLandKeyboard.elevation = if (isKeyboardAdjustModeActive) 8f * resources.displayMetrics.density else 0f
+        Toast.makeText(this, "已还原默认全屏键盘", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setKeyboardAdjustMode(enabled: Boolean) {
+        isKeyboardAdjustModeActive = enabled
+        binding.layoutKeyboardAdjustBar.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.ivKeyboardResizeCorner.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.ivKeyboardResizeCornerLeft.visibility = if (enabled) View.VISIBLE else View.GONE
+
+        val isCustom = prefs.getBoolean(KEY_KB_CARD_IS_CUSTOM, false)
+        val cornerRadiusDp = if (enabled || isCustom) 12f else 0f
+        val elevationDp = if (enabled) 8f else (if (isCustom) 4f else 0f)
+        binding.cardLandKeyboard.radius = cornerRadiusDp * resources.displayMetrics.density
+        binding.cardLandKeyboard.elevation = elevationDp * resources.displayMetrics.density
+
+        // 更新顶部栏“调节键盘”按钮高亮状态
+        binding.btnLandAdjustKeyboard.setBackgroundResource(
+            if (enabled) R.drawable.bg_land_active_tab else R.drawable.bg_land_capsule
+        )
+        binding.ivLandAdjustKeyboard.imageTintList = ColorStateList.valueOf(
+            ContextCompat.getColor(this, if (enabled) R.color.land_active_icon else R.color.land_inactive_icon)
+        )
+        binding.tvLandAdjustKeyboard.setTextColor(
+            ContextCompat.getColor(this, if (enabled) R.color.land_active_icon else R.color.land_key_text)
+        )
+
+        if (enabled) {
+            Toast.makeText(this, "进入键盘调节模式：可拖拽顶部手柄移动位置，拖拽双下角缩放大小", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun setupSplitControls() {
+        isSplitSwapped = prefs.getBoolean(KEY_LANDSCAPE_SPLIT_SWAP, false)
+        splitWidthIndex = prefs.getInt(KEY_LANDSCAPE_SPLIT_WIDTH_INDEX, 0)
+
+        // 左右互换按钮
+        binding.btnSplitSwap.setOnClickListener {
+            isSplitSwapped = !isSplitSwapped
+            prefs.edit().putBoolean(KEY_LANDSCAPE_SPLIT_SWAP, isSplitSwapped).apply()
+            applySplitSwap()
+            val tip = if (isSplitSwapped) "已将键盘切换至左侧" else "已将键盘切换至右侧"
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
+        }
+
+        // 宽度调节按钮
+        binding.btnSplitWidth.setOnClickListener {
+            splitWidthIndex = (splitWidthIndex + 1) % 3
+            prefs.edit().putInt(KEY_LANDSCAPE_SPLIT_WIDTH_INDEX, splitWidthIndex).apply()
+            applySplitWidth()
+            val ratioStr = when (splitWidthIndex) {
+                1 -> "触控板 35% : 键盘 65%"
+                2 -> "触控板 65% : 键盘 35%"
+                else -> "触控板 50% : 键盘 50%"
+            }
+            Toast.makeText(this, "分屏比例: $ratioStr", Toast.LENGTH_SHORT).show()
+        }
+
+        // 分屏手机输入框监听
+        binding.etSplitInput.keyEventListener = object : cn.moonify.aircursor.ui.RemoteEditText.KeyEventListener {
+            override fun onTextCommitted(text: String) {
+                sendTextToTablet(text)
+            }
+
+            override fun onEmptyBackspace() {
+                binding.etSplitInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+                }
+            }
+
+            override fun onEnterPressed() {
+                binding.etSplitInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                }
+                binding.etSplitInput.text?.clear()
+            }
+
+            override fun onInputCancelled() {
+                dismissLandscapeInput()
+            }
+        }
+
+        binding.etSplitInput.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_DONE ||
+                actionId == EditorInfo.IME_ACTION_SEND ||
+                actionId == EditorInfo.IME_ACTION_GO ||
+                actionId == EditorInfo.IME_ACTION_SEARCH ||
+                actionId == EditorInfo.IME_ACTION_NEXT ||
+                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
+                binding.etSplitInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                }
+                binding.etSplitInput.text?.clear()
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    private fun applySplitSwap() {
+        val leftPane = binding.layoutSplitPaneLeft
+        val rightPane = binding.layoutSplitPaneRight
+
+        leftPane.removeAllViews()
+        rightPane.removeAllViews()
+
+        if (!isSplitSwapped) {
+            // 左边触控板，右边输入法
+            leftPane.addView(binding.landSplitTouchpad)
+            rightPane.addView(binding.layoutSplitInputContainer)
+        } else {
+            // 左边输入法，右边触控板
+            leftPane.addView(binding.layoutSplitInputContainer)
+            rightPane.addView(binding.landSplitTouchpad)
+        }
+    }
+
+    private fun applySplitWidth() {
+        val (weightLeft, weightRight) = when (splitWidthIndex) {
+            1 -> Pair(0.7f, 1.3f)
+            2 -> Pair(1.3f, 0.7f)
+            else -> Pair(1.0f, 1.0f)
+        }
+        val leftLp = binding.layoutSplitPaneLeft.layoutParams as LinearLayout.LayoutParams
+        leftLp.weight = if (!isSplitSwapped) weightLeft else weightRight
+        binding.layoutSplitPaneLeft.layoutParams = leftLp
+
+        val rightLp = binding.layoutSplitPaneRight.layoutParams as LinearLayout.LayoutParams
+        rightLp.weight = if (!isSplitSwapped) weightRight else weightLeft
+        binding.layoutSplitPaneRight.layoutParams = rightLp
+    }
+
+    private fun setupPortraitLandscapeSettings() {
+        // 顶部连接卡片“📐 横屏模式”按钮
+        binding.btnEnterLandscape.setOnClickListener {
+            enterLandscapeMode()
+        }
+
+        // 设置页“📐 横屏触控”按钮
+        binding.btnSettingsEnterLandscape.setOnClickListener {
+            enterLandscapeMode()
+        }
+
+        // 键盘模式单选同步
+        val savedKbMode = prefs.getString(KEY_LANDSCAPE_KEYBOARD_MODE, KEYBOARD_MODE_FULLSCREEN_HW) ?: KEYBOARD_MODE_FULLSCREEN_HW
+        if (savedKbMode == KEYBOARD_MODE_SPLIT_SYSTEM) {
+            binding.rbSettingsKbSplit.isChecked = true
+            binding.rbDrawerKbSplit.isChecked = true
+        } else {
+            binding.rbSettingsKbFullscreen.isChecked = true
+            binding.rbDrawerKbFullscreen.isChecked = true
+        }
+
+        val onKbModeChanged: (String) -> Unit = { mode ->
+            prefs.edit().putString(KEY_LANDSCAPE_KEYBOARD_MODE, mode).apply()
+            if (mode == KEYBOARD_MODE_SPLIT_SYSTEM) {
+                binding.rbSettingsKbSplit.isChecked = true
+                binding.rbDrawerKbSplit.isChecked = true
+            } else {
+                binding.rbSettingsKbFullscreen.isChecked = true
+                binding.rbDrawerKbFullscreen.isChecked = true
+            }
+            if (isLandscapeKeyboardActive) {
+                switchLandscapeTab(true)
+            }
+        }
+
+        binding.rgSettingsLandscapeKeyboardMode.setOnCheckedChangeListener { _, checkedId ->
+            val mode = if (checkedId == R.id.rbSettingsKbSplit) KEYBOARD_MODE_SPLIT_SYSTEM else KEYBOARD_MODE_FULLSCREEN_HW
+            onKbModeChanged(mode)
+        }
+        binding.rgDrawerKeyboardMode.setOnCheckedChangeListener { _, checkedId ->
+            val mode = if (checkedId == R.id.rbDrawerKbSplit) KEYBOARD_MODE_SPLIT_SYSTEM else KEYBOARD_MODE_FULLSCREEN_HW
+            onKbModeChanged(mode)
+        }
+
+        // 滚轮开关同步 (默认关闭)
+        val savedScrollbar = prefs.getBoolean(KEY_LANDSCAPE_SHOW_SCROLLBAR, false)
+        binding.switchSettingsLandscapeScrollbar.isChecked = savedScrollbar
+        binding.switchDrawerScrollbar.isChecked = savedScrollbar
+
+        val onScrollbarChanged: (Boolean) -> Unit = { checked ->
+            prefs.edit().putBoolean(KEY_LANDSCAPE_SHOW_SCROLLBAR, checked).apply()
+            binding.switchSettingsLandscapeScrollbar.isChecked = checked
+            binding.switchDrawerScrollbar.isChecked = checked
+            updateLandscapeVisibilitySettings()
+        }
+        binding.switchSettingsLandscapeScrollbar.setOnCheckedChangeListener { _, isChecked ->
+            onScrollbarChanged(isChecked)
+        }
+        binding.switchDrawerScrollbar.setOnCheckedChangeListener { _, isChecked ->
+            onScrollbarChanged(isChecked)
+        }
+
+        // 鼠标左右键开关同步 (默认关闭)
+        val savedMouseButtons = prefs.getBoolean(KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS, false)
+        binding.switchSettingsLandscapeButtons.isChecked = savedMouseButtons
+        binding.switchDrawerMouseButtons.isChecked = savedMouseButtons
+
+        val onMouseButtonsChanged: (Boolean) -> Unit = { checked ->
+            prefs.edit().putBoolean(KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS, checked).apply()
+            binding.switchSettingsLandscapeButtons.isChecked = checked
+            binding.switchDrawerMouseButtons.isChecked = checked
+            updateLandscapeVisibilitySettings()
+        }
+        binding.switchSettingsLandscapeButtons.setOnCheckedChangeListener { _, isChecked ->
+            onMouseButtonsChanged(isChecked)
+        }
+        binding.switchDrawerMouseButtons.setOnCheckedChangeListener { _, isChecked ->
+            onMouseButtonsChanged(isChecked)
+        }
+
+        // 抽屉内快捷操作按钮
+        binding.btnDrawerDisconnect.setOnClickListener {
+            if (connectionManager.isConnectedOrConnecting()) {
+                disconnectAll()
+            } else {
+                if (pairedDevices.isNotEmpty()) connectToSelectedDevice()
+            }
+        }
+        binding.btnDrawerBlackScreen.setOnClickListener {
+            binding.drawerLayout.closeDrawer(GravityCompat.START)
+            launchBlackScreenMode()
+        }
+        binding.btnDrawerExitLandscape.setOnClickListener {
+            binding.drawerLayout.closeDrawer(GravityCompat.START)
+            exitLandscapeMode(isFromSensor = false)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        orientationEventListener?.disable()
+        orientationEventListener = null
         connectionManager.removeListener(connectionListener)
+        TabletRfcommServer.removeListener(tabletServerListener)
         // 注意：不要在此处调用 connectionManager.release()，以便退至后台后继续保持蓝牙连接
     }
 }

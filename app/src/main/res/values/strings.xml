@@ -50,10 +50,39 @@
 
     <!-- Sensitivity & Scroll Direction -->
     <string name="sensitivity_touchpad">触控板灵敏度: %s</string>
-    <string name="sensitivity_wheel">滚轮滑动灵敏度: %s</string>
-    <string name="wheel_direction_title">滚轮滑动方向:</string>
-    <string name="wheel_direction_natural">两指滑动方向 (默认)</string>
+    <string name="sensitivity_two_finger">双指拖动灵敏度: %s</string>
+    <string name="sensitivity_wheel">滚轮栏灵敏度: %s</string>
+    <string name="touchpad_scroll_direction_title">触控板双指滑动方向：</string>
+    <string name="touchpad_scroll_direction_natural">自然滑动（手指上推页面下滚，与触屏一致，默认）</string>
+    <string name="touchpad_scroll_direction_inverted">反向滑动（传统鼠标滚轮方向）</string>
+    <string name="wheel_direction_title">右侧滚轮栏滑动方向：</string>
+    <string name="wheel_direction_natural">跟随手指滑动方向 (默认)</string>
     <string name="wheel_direction_inverted">反向 (传统鼠标滚轮方向)</string>
+
+    <!-- Gesture & Recents Shortcut -->
+    <string name="setting_right_edge_back_title">手机右侧侧滑映射平板返回键</string>
+    <string name="setting_right_edge_back_desc">从手机右侧边缘向内侧滑返回时直接触发平板的系统返回键，并屏蔽手机自身的退出行为；左侧边缘侧滑仍保留手机退至后台功能</string>
+    <string name="shortcut_selection_title">平板后台/多任务快捷键模式：</string>
+    <string name="shortcut_overview">原生多任务卡片 (0x029F RECENT_APPS，停留后台自主选择，推荐)</string>
+    <string name="shortcut_alt_tab">Alt + Tab 实体键盘切换 (通用切应用)</string>
+    <string name="shortcut_win_tab">Win + Tab 任务视图 (Windows / Android 14+)</string>
+    <string name="gesture_hint_bottom">💡 提示：支持三指轻点、三指上滑或横滑切换平板应用（推荐三指轻点，免除手机分屏与截屏冲突）</string>
+
+    <!-- HID Modes -->
+    <string name="mode_selection_title">蓝牙 HID 工作模式：</string>
+    <string name="mode_combo">外接键盘 + 鼠标复合模式 (推荐)</string>
+    <string name="mode_touchpad">原生多指触控板模式 (实验性)</string>
+    <string name="mode_pure_mouse">传统纯鼠标模式</string>
+    <string name="mode_combo_desc">模拟外接物理键盘与标准鼠标，全面支持 Alt+Tab 切换应用、输入法拼音候选词上屏及防分屏手势。</string>
+    <string name="mode_touchpad_desc">高精度虚拟触控板引擎，支持多指原生报文与底部快捷导航（需平板系统内核支持 PTP 触控板）。</string>
+    <string name="mode_pure_mouse_desc">标准 3 键 Boot 鼠标，极简兼容老旧系统（不支持键盘与多媒体按键）。</string>
+
+    <!-- Quick Navigation -->
+    <string name="quick_back">◀ 返回</string>
+    <string name="quick_home">🏠 桌面</string>
+    <string name="quick_recents">🗂️ 任务</string>
+    <string name="quick_vol_down">🔉 音量-</string>
+    <string name="quick_vol_up">🔊 音量+</string>
 
     <!-- Background Service & Notification -->
     <string name="notification_channel_name">AirCursor 后台连接服务</string>
@@ -63,4 +92,25 @@
     <string name="notification_title_connecting">AirCursor 正在连接</string>
     <string name="notification_title_idle">AirCursor 后台服务就绪</string>
     <string name="notification_action_disconnect">断开连接</string>
+
+    <!-- Landscape Mode Resources -->
+    <string name="tab_landscape">📐 横屏模式</string>
+    <string name="landscape_btn_enter">📐 横屏触控</string>
+    <string name="landscape_btn_exit">退出横屏</string>
+    <string name="settings_section_landscape">📐 横屏模式设置</string>
+    <string name="landscape_keyboard_mode_title">横屏键盘输入类型：</string>
+    <string name="landscape_keyboard_mode_fullscreen">全屏模拟实体键盘 (由平板输入法解析，推荐)</string>
+    <string name="landscape_keyboard_mode_fullscreen_desc">像外接物理键盘一样，原生发送 1~0、+、=、退格与字母键，平板端原生拼音候选词上屏</string>
+    <string name="landscape_keyboard_mode_split">半屏/分屏键盘 (触控板 + 手机系统键盘)</string>
+    <string name="landscape_keyboard_mode_split_desc">屏幕一侧保留触控板，另一侧呼出手机自带输入法，支持宽度调节与左右互换</string>
+    <string name="landscape_show_scrollbar_title">横屏显示右侧垂直滚轮胶囊</string>
+    <string name="landscape_show_scrollbar_desc">在横屏右侧边缘悬浮显示垂直滚轮条，滑动可滚动平板页面（默认关闭）</string>
+    <string name="landscape_show_buttons_title">横屏显示底部鼠标左右键</string>
+    <string name="landscape_show_buttons_desc">在横屏底部居中悬浮显示鼠标物理左键与右键胶囊（默认关闭）</string>
+    <string name="disconnect_dialog_title">断开连接</string>
+    <string name="disconnect_dialog_msg">确定要断开与当前平板设备的蓝牙连接吗？</string>
+    <string name="disconnect_dialog_confirm">断开连接</string>
+    <string name="cancel">取消</string>
+    <string name="split_swap_btn">左右互换</string>
+    <string name="split_width_btn">调整宽度</string>
 </resources>

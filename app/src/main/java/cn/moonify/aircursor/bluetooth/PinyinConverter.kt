@@ -102,6 +102,48 @@ object PinyinConverter {
         charIndices = indices
     }
 
+    /**
+     * 常用多音字与成词特殊音节离线映射表（在 ICU 引擎不可用时提供高可靠分词与多音字兜底）
+     */
+    private val POLYPHONIC_WORDS = mapOf(
+        "银行" to "yin hang",
+        "重新" to "chong xin",
+        "音乐" to "yin yue",
+        "乐曲" to "yue qu",
+        "会计" to "kuai ji",
+        "首都" to "shou du",
+        "都市" to "du shi",
+        "西藏" to "xi zang",
+        "藏族" to "zang zu",
+        "长大" to "zhang da",
+        "成长" to "cheng zhang",
+        "长江" to "chang jiang",
+        "重要" to "zhong yao",
+        "重复" to "chong fu",
+        "着急" to "zhao ji",
+        "着想" to "zhuo xiang",
+        "得亏" to "de kui",
+        "觉得" to "jue de",
+        "还行" to "hai xing",
+        "行业" to "hang ye",
+        "行动" to "xing dong",
+        "行李" to "xing li",
+        "快乐" to "kuai le",
+        "乐意" to "le yi",
+        "调动" to "diao dong",
+        "调查" to "diao cha",
+        "空调" to "kong tiao",
+        "方便" to "fang bian",
+        "便宜" to "pian yi",
+        "差劲" to "cha jin",
+        "出差" to "chu chai",
+        "西安" to "xi an",
+        "方案" to "fang an",
+        "平安" to "ping an",
+        "延安" to "yan an",
+        "天安门" to "tian an men"
+    )
+
     fun getPinyin(c: Char): String? {
         val code = c.code
         if (code in UNICODE_START..UNICODE_END) {
@@ -127,40 +169,108 @@ object PinyinConverter {
     }
 
     /**
+     * 判断一个音节是否以元音 a, o, e 开头（此类音节前接其他拼音时需注入隔音符号 '）
+     */
+    private fun startsWithVowel(syllable: String): Boolean {
+        if (syllable.isEmpty()) return false
+        val first = syllable[0]
+        return first == 'a' || first == 'o' || first == 'e'
+    }
+
+    /**
+     * 智能整句/短语拼音转译（优先使用 Android ICU Transliterator 进行整句上下文分词与多音字消歧义）：
+     * 返回按汉字字符对齐的拼音音节列表；若无法识别则保留 null
+     */
+    fun convertChinesePhraseToPinyin(phrase: String): List<String?> {
+        if (phrase.isEmpty()) return emptyList()
+
+        // 1. 优先查多音字特定词典
+        val exactMatch = POLYPHONIC_WORDS[phrase]
+        if (exactMatch != null) {
+            val parts = exactMatch.split(" ")
+            if (parts.size == phrase.length) {
+                return parts
+            }
+        }
+
+        // 2. 尝试系统级 ICU Transliterator 上下文识别
+        if (TransliteratorHelper.isAvailable) {
+            val transliterated = TransliteratorHelper.transliterate(phrase)
+            if (!transliterated.isNullOrEmpty()) {
+                val tokens = transliterated.trim().lowercase().split("\\s+".toRegex())
+                if (tokens.size == phrase.length && tokens.all { token -> token.all { it in 'a'..'z' } }) {
+                    // 关键纠正：ICU 将 ü (nü, lü, lüe, nüe) 转译为了 Ascii u (nu, lu)
+                    // 中文全拼输入法物理键盘必须输入 v (如 nv, lv, lve, nve)，否则打出“奴/怒/路/鲁”
+                    return tokens.mapIndexed { idx, token ->
+                        val charPinyin = getPinyin(phrase[idx])
+                        if (charPinyin != null && (charPinyin.startsWith("nv") || charPinyin.startsWith("lv"))) {
+                            charPinyin
+                        } else {
+                            token
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. 回退为单字字典逐字查询
+        return phrase.map { getPinyin(it) }
+    }
+
+    /**
      * 将一段文本拆解为可通过 HID 实体键盘发送给平板输入法的击键动作序列。
-     * - 中文汉字连续序列：按自然词组（每 1~4 个汉字）提取对应拼音英文字母序列，随后自动发送空格键上屏确认；
+     * - 中文汉字连续序列：按自然词组（每 1~4 个汉字）提取对应拼音英文字母序列（自动注入隔音符号），随后发送空格键上屏；
      * - 标点符号与特殊字符：直接映射为对应的键盘按键；
      * - 英文字母与数字：直接发送键盘按键。
      */
     fun convertTextToKeystrokeActions(text: String): List<KeystrokeAction> {
         val actions = mutableListOf<KeystrokeAction>()
-        var currentPinyin = StringBuilder()
-        var currentChineseCount = 0
 
-        fun flushChinese() {
-            if (currentPinyin.isNotEmpty()) {
-                actions.add(KeystrokeAction.PinyinSequence(currentPinyin.toString()))
-                currentPinyin = StringBuilder()
-                currentChineseCount = 0
-            }
-        }
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c.code in UNICODE_START..UNICODE_END) {
+                // 收集连续的中文字符块
+                val chineseBuilder = StringBuilder()
+                while (i < text.length && text[i].code in UNICODE_START..UNICODE_END) {
+                    chineseBuilder.append(text[i])
+                    i++
+                }
+                val chineseBlock = chineseBuilder.toString()
 
-        for (c in text) {
-            val py = getPinyin(c)
-            if (py != null) {
-                currentPinyin.append(py)
-                currentChineseCount++
-                // 单个词组控制在最多 4 个汉字（例如 "今天天气" 或 "你好世界"），
-                // 达到上限时提前刷新，确保平板端输入法拼音候选栏响应迅速且首选词 100% 精准
-                if (currentChineseCount >= 4) {
-                    flushChinese()
+                // 将连续中文字符按双字/单字自然词组切分（优先 2 字词单元），匹配平板输入法首位候选词命中率最高
+                var blockIdx = 0
+                while (blockIdx < chineseBlock.length) {
+                    val remaining = chineseBlock.length - blockIdx
+                    val chunkSize = when {
+                        remaining <= 2 -> remaining
+                        remaining == 3 -> 2 // 3 字切为 2 + 1
+                        remaining == 4 -> 2 // 4 字切为 2 + 2
+                        else -> 2          // 优先 2 字词单元
+                    }
+                    val chunk = chineseBlock.substring(blockIdx, blockIdx + chunkSize)
+                    val syllablesList = convertChinesePhraseToPinyin(chunk)
+
+                    val pinyinCombined = StringBuilder()
+                    for ((sylIdx, syl) in syllablesList.withIndex()) {
+                        if (syl.isNullOrEmpty()) continue
+                        // 若后一个音节以 a, o, e 开头（如 xi + an），前接音节末尾不是隔音符时注入标准隔音符 '
+                        if (sylIdx > 0 && startsWithVowel(syl) && pinyinCombined.isNotEmpty() && !pinyinCombined.endsWith('\'')) {
+                            pinyinCombined.append('\'')
+                        }
+                        pinyinCombined.append(syl)
+                    }
+
+                    if (pinyinCombined.isNotEmpty()) {
+                        actions.add(KeystrokeAction.PinyinSequence(pinyinCombined.toString()))
+                    }
+                    blockIdx += chunkSize
                 }
             } else {
-                flushChinese()
                 actions.add(KeystrokeAction.DirectChar(c))
+                i++
             }
         }
-        flushChinese()
 
         return actions
     }
