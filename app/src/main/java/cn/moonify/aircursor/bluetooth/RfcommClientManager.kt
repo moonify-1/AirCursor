@@ -12,6 +12,8 @@ import java.io.DataOutputStream
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Manages the client-side RFCOMM SPP Bluetooth socket connection to the tablet.
@@ -60,6 +62,7 @@ class RfcommClientManager {
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val sendExecutor = Executors.newSingleThreadExecutor()
     private val connectExecutor = Executors.newSingleThreadExecutor()
+    private val ackExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -97,51 +100,53 @@ class RfcommClientManager {
 
             bluetoothAdapter?.cancelDiscovery()
 
-            // 1. 尝试专属 Secure RFCOMM
+            // 1. 尝试专属 Insecure RFCOMM (免配对认证弹窗拦截，连接速度最快)
             try {
-                Log.d(TAG, "Trying AirCursor Secure RFCOMM to ${device.address}")
-                val s = device.createRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
+                Log.d(TAG, "Trying AirCursor Insecure RFCOMM to ${device.address}")
+                val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
                 s.connect()
                 connectedSocket = s
             } catch (e0: Exception) {
                 lastException = e0
-                Log.w(TAG, "AirCursor Secure RFCOMM failed: ${e0.message}, trying AirCursor Insecure...")
+                Log.w(TAG, "AirCursor Insecure RFCOMM failed: ${e0.message}, trying AirCursor Secure...")
             }
 
-            // 2. 尝试专属 Insecure RFCOMM
+            // 2. 尝试专属 Secure RFCOMM
             if (connectedSocket == null) {
                 try {
-                    val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
-                    s.connect()
-                    connectedSocket = s
-                } catch (e00: Exception) {
-                    lastException = e00
-                    Log.w(TAG, "AirCursor Insecure RFCOMM failed: ${e00.message}, trying Standard SPP...")
-                }
-            }
-
-            // 3. 尝试标准 Secure RFCOMM
-            if (connectedSocket == null) {
-                try {
-                    Log.d(TAG, "Trying Standard Secure RFCOMM to ${device.address}")
-                    val s = device.createRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
+                    Log.d(TAG, "Trying AirCursor Secure RFCOMM to ${device.address}")
+                    val s = device.createRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
                     s.connect()
                     connectedSocket = s
                 } catch (e1: Exception) {
                     lastException = e1
-                    Log.w(TAG, "Standard Secure RFCOMM failed: ${e1.message}, trying Insecure RFCOMM...")
+                    Log.w(TAG, "AirCursor Secure RFCOMM failed: ${e1.message}, trying Standard Insecure SPP...")
                 }
             }
 
-            // 4. 尝试标准 Insecure RFCOMM
+            // 3. 尝试通用 Insecure SPP
             if (connectedSocket == null) {
                 try {
+                    Log.d(TAG, "Trying Standard Insecure SPP to ${device.address}")
                     val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
                     s.connect()
                     connectedSocket = s
                 } catch (e2: Exception) {
                     lastException = e2
-                    Log.w(TAG, "Insecure RFCOMM failed: ${e2.message}, trying reflection fallback...")
+                    Log.w(TAG, "Standard Insecure SPP failed: ${e2.message}, trying Standard Secure SPP...")
+                }
+            }
+
+            // 4. 尝试通用 Secure SPP
+            if (connectedSocket == null) {
+                try {
+                    Log.d(TAG, "Trying Standard Secure SPP to ${device.address}")
+                    val s = device.createRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
+                    s.connect()
+                    connectedSocket = s
+                } catch (e3: Exception) {
+                    lastException = e3
+                    Log.w(TAG, "Standard Secure SPP failed: ${e3.message}, trying reflection fallback...")
                 }
             }
 
@@ -152,9 +157,9 @@ class RfcommClientManager {
                     val s = method.invoke(device, 1) as BluetoothSocket
                     s.connect()
                     connectedSocket = s
-                } catch (e3: Exception) {
-                    lastException = e3
-                    Log.w(TAG, "Reflection RFCOMM failed: ${e3.message}")
+                } catch (e4: Exception) {
+                    lastException = e4
+                    Log.w(TAG, "Reflection RFCOMM failed: ${e4.message}")
                 }
             }
 
@@ -199,15 +204,18 @@ class RfcommClientManager {
 
                 var response: String? = null
                 try {
-                    var elapsed = 0
-                    while (elapsed < 1200 && (dis == null || dis.available() <= 0) && s.isConnected) {
-                        Thread.sleep(10)
-                        elapsed += 10
+                    // 使用线程池异步限时 600ms 读取平板 ACK 回执，毫秒级响应，彻底消除 dis.available() 在不同厂商设备上的不稳定等待延迟
+                    val ackFuture = ackExecutor.submit<String> {
+                        dis?.readUTF() ?: RfcommConstants.ACK_PASTE
                     }
-                    if (dis != null && dis.available() > 0) {
-                        response = dis.readUTF()
-                        Log.d(TAG, "Received ACK from tablet: $response")
+                    response = try {
+                        ackFuture.get(600, TimeUnit.MILLISECONDS)
+                    } catch (te: TimeoutException) {
+                        ackFuture.cancel(true)
+                        Log.w(TAG, "Timeout waiting for ACK from tablet (600ms)")
+                        null
                     }
+                    Log.d(TAG, "Received ACK from tablet: $response")
                 } catch (te: Exception) {
                     Log.w(TAG, "Timeout or error reading ACK from tablet: ${te.message}")
                 }
@@ -279,5 +287,6 @@ class RfcommClientManager {
         disconnect()
         sendExecutor.shutdown()
         connectExecutor.shutdown()
+        ackExecutor.shutdown()
     }
 }
