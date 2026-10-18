@@ -238,15 +238,15 @@ object PinyinConverter {
                 }
                 val chineseBlock = chineseBuilder.toString()
 
-                // 将连续中文字符按合理词长（最多 3~4 字）切分为自然击键单元，避免拼音过长导致平板候选栏解析失败
+                // 将连续中文字符按双字/单字自然词组切分（优先 2 字词单元），匹配平板输入法首位候选词命中率最高
                 var blockIdx = 0
                 while (blockIdx < chineseBlock.length) {
                     val remaining = chineseBlock.length - blockIdx
                     val chunkSize = when {
-                        remaining <= 4 -> remaining
-                        remaining == 5 -> 3 // 5 字切为 3 + 2
-                        remaining == 6 -> 3 // 6 字切为 3 + 3
-                        else -> 4          // 更多字切为 4 + ...
+                        remaining <= 2 -> remaining
+                        remaining == 3 -> 2 // 3 字切为 2 + 1
+                        remaining == 4 -> 2 // 4 字切为 2 + 2
+                        else -> 2          // 优先 2 字词单元
                     }
                     val chunk = chineseBlock.substring(blockIdx, blockIdx + chunkSize)
                     val syllablesList = convertChinesePhraseToPinyin(chunk)

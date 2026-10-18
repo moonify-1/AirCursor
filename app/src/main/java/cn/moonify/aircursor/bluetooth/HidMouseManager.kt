@@ -921,6 +921,9 @@ class HidMouseManager(private val context: Context) {
         if (!isKeyboardSupported) return
         keyboardExecutor.execute {
             try {
+                // 发送前先彻底重置并释放按键状态，杜绝任何未释放按键被平板系统误判为长按触发疯狂连击
+                sendKeyboardReleaseSync()
+
                 val actions = PinyinConverter.convertTextToKeystrokeActions(text)
                 Log.d(TAG, "sendChineseTextAsPinyin: text='$text', generated ${actions.size} actions")
                 for (action in actions) {
@@ -929,22 +932,22 @@ class HidMouseManager(private val context: Context) {
                             for (c in action.pinyin) {
                                 val mapping = charToKeycode(c)
                                 if (mapping != null) {
-                                    sendKeySync(mapping.first, mapping.second, pressHoldMs = 15L, releaseGapMs = 12L)
+                                    sendKeySync(mapping.first, mapping.second, pressHoldMs = 12L, releaseGapMs = 10L)
                                 }
                             }
-                            // 给平板输入法核心引擎留出拼音分词、候选词检索与悬浮窗渲染时间（优化至 60ms）
+                            // 给平板输入法核心引擎留出拼音分词、候选词检索与悬浮窗渲染时间（优化至 40ms）
                             try {
-                                Thread.sleep(60)
+                                Thread.sleep(40)
                             } catch (_: InterruptedException) {
                                 return@execute
                             }
 
                             // 发送空格键，提交确认平板候选栏首位汉字候选词上屏
-                            sendKeySync(KEY_SPACE, 0, pressHoldMs = 16L, releaseGapMs = 14L)
+                            sendKeySync(KEY_SPACE, 0, pressHoldMs = 14L, releaseGapMs = 12L)
 
-                            // 等待平板输入法完成 InputConnection.commitText() 并重置候选缓冲区（优化至 35ms）
+                            // 等待平板输入法完成 InputConnection.commitText() 并重置候选缓冲区（优化至 20ms）
                             try {
-                                Thread.sleep(35)
+                                Thread.sleep(20)
                             } catch (_: InterruptedException) {
                                 return@execute
                             }
@@ -952,9 +955,9 @@ class HidMouseManager(private val context: Context) {
                         is PinyinConverter.KeystrokeAction.DirectChar -> {
                             val mapping = charToKeycode(action.char)
                             if (mapping != null) {
-                                sendKeySync(mapping.first, mapping.second, pressHoldMs = 16L, releaseGapMs = 14L)
+                                sendKeySync(mapping.first, mapping.second, pressHoldMs = 14L, releaseGapMs = 12L)
                                 try {
-                                    Thread.sleep(12)
+                                    Thread.sleep(8)
                                 } catch (_: InterruptedException) {
                                     return@execute
                                 }
