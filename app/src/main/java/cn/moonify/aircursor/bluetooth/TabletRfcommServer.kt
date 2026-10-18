@@ -1,5 +1,6 @@
 package cn.moonify.aircursor.bluetooth
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothServerSocket
@@ -7,10 +8,13 @@ import android.bluetooth.BluetoothSocket
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
+import androidx.core.content.ContextCompat
 import cn.moonify.aircursor.ime.RemoteImeService
 import cn.moonify.aircursor.service.AirCursorService
 import java.io.DataInputStream
@@ -67,10 +71,15 @@ object TabletRfcommServer {
 
     @SuppressLint("MissingPermission")
     fun start(context: Context) {
-        appContext = context.applicationContext
-        // 自动拉起平板端前台保活服务，确保平板切换至任何输入应用时后台不被系统冻结或杀死
-        appContext?.let {
-            AirCursorService.start(it)
+        val app = context.applicationContext
+        appContext = app
+
+        // Android 12+ 运行时权限校验：若尚未授权 BLUETOOTH_CONNECT，暂缓启动服务端，避免抛出 SecurityException 导致死循环
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(app, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "BLUETOOTH_CONNECT permission not granted yet, deferring TabletRfcommServer start")
+                return
+            }
         }
 
         if (isRunning) {
@@ -83,6 +92,9 @@ object TabletRfcommServer {
             Log.w(TAG, "Bluetooth not available or disabled, cannot start TabletRfcommServer")
             return
         }
+
+        // 自动拉起平板端前台保活服务，确保平板切换至任何输入应用时后台不被系统冻结或杀死
+        AirCursorService.start(app)
 
         isRunning = true
         notifyStateChanged()
@@ -141,6 +153,10 @@ object TabletRfcommServer {
                             handleClient(socket)
                         }, "AirCursor-ClientHandler-${socket.remoteDevice?.address}").start()
                     }
+                } catch (se: SecurityException) {
+                    Log.e(TAG, "SecurityException in RFCOMM server, permissions revoked", se)
+                    isRunning = false
+                    break
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in RFCOMM server accept loop", e)
                 } finally {

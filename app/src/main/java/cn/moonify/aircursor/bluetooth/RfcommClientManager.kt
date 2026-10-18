@@ -99,67 +99,50 @@ class RfcommClientManager {
             var lastException: Exception? = null
 
             bluetoothAdapter?.cancelDiscovery()
+            try {
+                device.fetchUuidsWithSdp()
+            } catch (_: Exception) {}
 
             // 1. 尝试专属 Insecure RFCOMM (免配对认证弹窗拦截，连接速度最快)
+            var s0: BluetoothSocket? = null
             try {
                 Log.d(TAG, "Trying AirCursor Insecure RFCOMM to ${device.address}")
-                val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
-                s.connect()
-                connectedSocket = s
+                s0 = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
+                s0.connect()
+                connectedSocket = s0
             } catch (e0: Exception) {
+                try { s0?.close() } catch (_: Exception) {}
                 lastException = e0
-                Log.w(TAG, "AirCursor Insecure RFCOMM failed: ${e0.message}, trying AirCursor Secure...")
+                Log.w(TAG, "AirCursor Insecure RFCOMM failed: ${e0.message}, trying Standard Insecure SPP...")
             }
 
-            // 2. 尝试专属 Secure RFCOMM
+            // 2. 尝试通用 Insecure SPP
             if (connectedSocket == null) {
-                try {
-                    Log.d(TAG, "Trying AirCursor Secure RFCOMM to ${device.address}")
-                    val s = device.createRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
-                    s.connect()
-                    connectedSocket = s
-                } catch (e1: Exception) {
-                    lastException = e1
-                    Log.w(TAG, "AirCursor Secure RFCOMM failed: ${e1.message}, trying Standard Insecure SPP...")
-                }
-            }
-
-            // 3. 尝试通用 Insecure SPP
-            if (connectedSocket == null) {
+                var s1: BluetoothSocket? = null
                 try {
                     Log.d(TAG, "Trying Standard Insecure SPP to ${device.address}")
-                    val s = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
-                    s.connect()
-                    connectedSocket = s
+                    s1 = device.createInsecureRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
+                    s1.connect()
+                    connectedSocket = s1
+                } catch (e1: Exception) {
+                    try { s1?.close() } catch (_: Exception) {}
+                    lastException = e1
+                    Log.w(TAG, "Standard Insecure SPP failed: ${e1.message}, trying AirCursor Secure RFCOMM...")
+                }
+            }
+
+            // 3. 尝试专属 Secure RFCOMM
+            if (connectedSocket == null) {
+                var s2: BluetoothSocket? = null
+                try {
+                    Log.d(TAG, "Trying AirCursor Secure RFCOMM to ${device.address}")
+                    s2 = device.createRfcommSocketToServiceRecord(RfcommConstants.AIRCURSOR_UUID)
+                    s2.connect()
+                    connectedSocket = s2
                 } catch (e2: Exception) {
+                    try { s2?.close() } catch (_: Exception) {}
                     lastException = e2
-                    Log.w(TAG, "Standard Insecure SPP failed: ${e2.message}, trying Standard Secure SPP...")
-                }
-            }
-
-            // 4. 尝试通用 Secure SPP
-            if (connectedSocket == null) {
-                try {
-                    Log.d(TAG, "Trying Standard Secure SPP to ${device.address}")
-                    val s = device.createRfcommSocketToServiceRecord(RfcommConstants.SPP_UUID)
-                    s.connect()
-                    connectedSocket = s
-                } catch (e3: Exception) {
-                    lastException = e3
-                    Log.w(TAG, "Standard Secure SPP failed: ${e3.message}, trying reflection fallback...")
-                }
-            }
-
-            // 5. 尝试底层反射创建 RFCOMM Channel 1
-            if (connectedSocket == null) {
-                try {
-                    val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                    val s = method.invoke(device, 1) as BluetoothSocket
-                    s.connect()
-                    connectedSocket = s
-                } catch (e4: Exception) {
-                    lastException = e4
-                    Log.w(TAG, "Reflection RFCOMM failed: ${e4.message}")
+                    Log.w(TAG, "AirCursor Secure RFCOMM failed: ${e2.message}")
                 }
             }
 

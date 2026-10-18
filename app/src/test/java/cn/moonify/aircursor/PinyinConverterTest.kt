@@ -49,6 +49,17 @@ class PinyinConverterTest {
     }
 
     @Test
+    fun testTwoCharacterChunking() {
+        // 4 个汉字切为两个双字单元，极大提升平板首选词命中率
+        val actions = PinyinConverter.convertTextToKeystrokeActions("方案银行")
+        assertEquals(2, actions.size)
+        assertTrue(actions[0] is PinyinConverter.KeystrokeAction.PinyinSequence)
+        assertTrue(actions[1] is PinyinConverter.KeystrokeAction.PinyinSequence)
+        assertEquals("fang'an", (actions[0] as PinyinConverter.KeystrokeAction.PinyinSequence).pinyin)
+        assertEquals("yinhang", (actions[1] as PinyinConverter.KeystrokeAction.PinyinSequence).pinyin)
+    }
+
+    @Test
     fun testNvLvPinyin() {
         val dictFile = java.io.File("src/main/assets/pinyin_dict.bin")
         if (dictFile.exists()) {

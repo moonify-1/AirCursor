@@ -82,7 +82,9 @@ class AirCursorConnectionManager private constructor() {
     private var reconnectRunnable: Runnable? = null
     private var watchdogRunnable: Runnable? = null
     private var rfcommWatchdogRunnable: Runnable? = null
-    private val RFCOMM_WATCHDOG_INTERVAL_MS = 3000L
+    private var rfcommProbeAttempts = 0
+    private val MAX_RFCOMM_PROBES = 2
+    private val RFCOMM_WATCHDOG_INTERVAL_MS = 15000L
 
     fun init(context: Context) {
         if (isInitialized) return
@@ -105,7 +107,6 @@ class AirCursorConnectionManager private constructor() {
                 Log.d(TAG, "HID onConnectionStateChanged: device=${device?.address}, state=$state")
                 if (state == BluetoothProfile.STATE_CONNECTED) {
                     onDeviceConnected(device)
-                    ensureRfcommConnected(device)
                     startRfcommWatchdog()
                 } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                     stopRfcommWatchdog()
@@ -119,12 +120,10 @@ class AirCursorConnectionManager private constructor() {
             override fun onConnectionStateChanged(state: Int, device: BluetoothDevice?) {
                 Log.d(TAG, "RFCOMM onConnectionStateChanged: device=${device?.address}, state=$state")
                 if (state == RfcommClientManager.STATE_CONNECTED) {
+                    rfcommProbeAttempts = 0
                     onDeviceConnected(device)
                 } else if (state == RfcommClientManager.STATE_DISCONNECTED) {
-                    // 若 HID 仍处于连接中且非手动断开，确保看门狗继续在后台尝试静默握手
-                    if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED && !isManualDisconnect) {
-                        startRfcommWatchdog()
-                    }
+                    // 注意：绝不能在此处重复触发 startRfcommWatchdog()，否则会导致 1 秒极速重连死循环与界面狂闪！
                     onDeviceDisconnected(device, isFromHid = false)
                 }
                 notifyStateChanged()
@@ -433,36 +432,48 @@ class AirCursorConnectionManager private constructor() {
             rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTING) {
             return
         }
+        // 用户主动聚焦输入框或手动触发连接时，重置探测计数器
+        rfcommProbeAttempts = 0
         Log.d(TAG, "ensureRfcommConnected: requesting connection to ${target.address}")
         rfcommClientManager.connect(target, silentIfFailed = true)
     }
 
     /**
-     * 启动 RFCOMM 后台守护轮询：当 HID 已连上平板但平板尚未打开 AirCursor 或串口尚未握手时，
-     * 每 3 秒自动静默重试一次握手，平板一旦开启软件即可零人工干预自动建立 100% 剪贴板直通通道！
+     * 启动 RFCOMM 后台探测守护：当 HID 连接建立后，在后台静默探测 1~2 次；
+     * 若平板端开启了中继则无感建立剪贴板直通通道；若未开启则及时终止，绝不无休止轮询导致发热狂闪！
      */
     fun startRfcommWatchdog() {
         stopRfcommWatchdog()
         if (isManualDisconnect) return
+        rfcommProbeAttempts = 0
         rfcommWatchdogRunnable = object : Runnable {
             override fun run() {
                 if (isManualDisconnect) return
                 if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
                     if (rfcommClientManager.connectionState == RfcommClientManager.STATE_DISCONNECTED) {
-                        val device = hidMouseManager.connectedDevice ?: targetDevice ?: getLastSavedDevice()
-                        if (device != null) {
-                            Log.d(TAG, "RFCOMM Watchdog: HID is connected, attempting RFCOMM connection to ${device.address}")
-                            rfcommClientManager.connect(device, silentIfFailed = true)
+                        if (rfcommProbeAttempts < MAX_RFCOMM_PROBES) {
+                            rfcommProbeAttempts++
+                            val device = hidMouseManager.connectedDevice ?: targetDevice ?: getLastSavedDevice()
+                            if (device != null) {
+                                Log.d(TAG, "RFCOMM Watchdog: Attempting probe #$rfcommProbeAttempts to ${device.address}")
+                                rfcommClientManager.connect(device, silentIfFailed = true)
+                            }
+                            mainHandler.postDelayed(this, RFCOMM_WATCHDOG_INTERVAL_MS)
+                        } else {
+                            Log.d(TAG, "RFCOMM Watchdog: Reached max probes ($MAX_RFCOMM_PROBES), stopping auto-probe to save battery and keep UI stable.")
                         }
+                    } else if (rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED) {
+                        rfcommProbeAttempts = 0
                     }
-                    mainHandler.postDelayed(this, RFCOMM_WATCHDOG_INTERVAL_MS)
                 }
             }
         }
-        mainHandler.postDelayed(rfcommWatchdogRunnable!!, 1000L)
+        // 延时 2.5 秒发起首次探测，留给 HID 蓝牙物理 ACL 链路充分稳定的协商时间
+        mainHandler.postDelayed(rfcommWatchdogRunnable!!, 2500L)
     }
 
     fun stopRfcommWatchdog() {
+        rfcommProbeAttempts = 0
         rfcommWatchdogRunnable?.let { mainHandler.removeCallbacks(it) }
         rfcommWatchdogRunnable = null
     }
