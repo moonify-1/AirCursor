@@ -173,14 +173,14 @@ class HidMouseManager(private val context: Context) {
             0xA1.toByte(), 0x00.toByte(),
             0x05.toByte(), 0x09.toByte(),
             0x19.toByte(), 0x01.toByte(),
-            0x29.toByte(), 0x03.toByte(),
+            0x29.toByte(), 0x05.toByte(),
             0x15.toByte(), 0x00.toByte(),
             0x25.toByte(), 0x01.toByte(),
-            0x95.toByte(), 0x03.toByte(),
+            0x95.toByte(), 0x05.toByte(),
             0x75.toByte(), 0x01.toByte(),
             0x81.toByte(), 0x02.toByte(),
             0x95.toByte(), 0x01.toByte(),
-            0x75.toByte(), 0x05.toByte(),
+            0x75.toByte(), 0x03.toByte(),
             0x81.toByte(), 0x03.toByte(),
             0x05.toByte(), 0x01.toByte(),
             0x09.toByte(), 0x30.toByte(),
@@ -560,25 +560,37 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
-     * 发送系统 Back 返回键：
-     * 1. 复合模式 / 触控板模式下，通过 Consumer Control (Report ID 3) 发送 AC Back (0x20)，Android 平板原生识别为 KEYCODE_BACK；
-     * 2. 纯鼠标模式下，发送第 4 键 (BUTTON_BACK = 0x08) 触发返回。
+     * 发送系统 Back 返回键至平板：
+     * 发送标准 5 键鼠标的第 4 键 (BUTTON_BACK = 0x08)。
+     * 在 Android 系统底层 (CursorInputMapper)，鼠标第 4 键 (AMOTION_EVENT_BUTTON_BACK)
+     * 被直接转化为全局硬件返回事件 (KeyEvent.KEYCODE_BACK)，能 100% 穿透所有应用、浏览器及系统界面触发返回！
      */
     @SuppressLint("MissingPermission")
     fun sendBack() {
-        if (hidMode != MODE_PURE_MOUSE) {
-            sendConsumerKey(CONSUMER_BACK)
-        } else {
-            val hid = hidDevice ?: return
-            val device = connectedDevice ?: return
-            executor.execute {
-                try {
-                    sendMouseReport(BUTTON_BACK, 0, 0, 0, 0)
-                    Thread.sleep(30)
-                    sendMouseReport(BUTTON_NONE, 0, 0, 0, 0)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to send mouse back report", e)
+        val hid = hidDevice ?: return
+        val device = connectedDevice ?: return
+
+        executor.execute {
+            try {
+                // 1. 发送鼠标第 4 键按下 (BUTTON_BACK = 0x08)
+                var okDown = false
+                for (i in 0 until 4) {
+                    okDown = sendMouseReport(BUTTON_BACK, 0, 0, 0, 0)
+                    if (okDown) break
+                    Thread.sleep(8)
                 }
+
+                Thread.sleep(45)
+
+                // 2. 发送鼠标释放 (全 0)
+                for (i in 0 until 5) {
+                    val okUp = sendMouseReport(BUTTON_NONE, 0, 0, 0, 0)
+                    if (okUp) break
+                    Thread.sleep(8)
+                }
+                Log.d(TAG, "sendBack: sent mouse BUTTON_BACK report (okDown=$okDown)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send mouse back report", e)
             }
         }
     }
@@ -909,6 +921,9 @@ class HidMouseManager(private val context: Context) {
         if (!isKeyboardSupported) return
         keyboardExecutor.execute {
             try {
+                // 发送前先彻底重置并释放按键状态，杜绝任何未释放按键被平板系统误判为长按触发疯狂连击
+                sendKeyboardReleaseSync()
+
                 val actions = PinyinConverter.convertTextToKeystrokeActions(text)
                 Log.d(TAG, "sendChineseTextAsPinyin: text='$text', generated ${actions.size} actions")
                 for (action in actions) {
@@ -917,22 +932,22 @@ class HidMouseManager(private val context: Context) {
                             for (c in action.pinyin) {
                                 val mapping = charToKeycode(c)
                                 if (mapping != null) {
-                                    sendKeySync(mapping.first, mapping.second, pressHoldMs = 15L, releaseGapMs = 12L)
+                                    sendKeySync(mapping.first, mapping.second, pressHoldMs = 12L, releaseGapMs = 10L)
                                 }
                             }
-                            // 给平板输入法核心引擎留出拼音分词、候选词检索与悬浮窗渲染时间（优化至 60ms）
+                            // 给平板输入法核心引擎留出拼音分词、候选词检索与悬浮窗渲染时间（优化至 40ms）
                             try {
-                                Thread.sleep(60)
+                                Thread.sleep(40)
                             } catch (_: InterruptedException) {
                                 return@execute
                             }
 
                             // 发送空格键，提交确认平板候选栏首位汉字候选词上屏
-                            sendKeySync(KEY_SPACE, 0, pressHoldMs = 16L, releaseGapMs = 14L)
+                            sendKeySync(KEY_SPACE, 0, pressHoldMs = 14L, releaseGapMs = 12L)
 
-                            // 等待平板输入法完成 InputConnection.commitText() 并重置候选缓冲区（优化至 35ms）
+                            // 等待平板输入法完成 InputConnection.commitText() 并重置候选缓冲区（优化至 20ms）
                             try {
-                                Thread.sleep(35)
+                                Thread.sleep(20)
                             } catch (_: InterruptedException) {
                                 return@execute
                             }
@@ -940,9 +955,9 @@ class HidMouseManager(private val context: Context) {
                         is PinyinConverter.KeystrokeAction.DirectChar -> {
                             val mapping = charToKeycode(action.char)
                             if (mapping != null) {
-                                sendKeySync(mapping.first, mapping.second, pressHoldMs = 16L, releaseGapMs = 14L)
+                                sendKeySync(mapping.first, mapping.second, pressHoldMs = 14L, releaseGapMs = 12L)
                                 try {
-                                    Thread.sleep(12)
+                                    Thread.sleep(8)
                                 } catch (_: InterruptedException) {
                                     return@execute
                                 }

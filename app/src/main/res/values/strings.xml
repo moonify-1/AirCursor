@@ -92,4 +92,25 @@
     <string name="notification_title_connecting">AirCursor 正在连接</string>
     <string name="notification_title_idle">AirCursor 后台服务就绪</string>
     <string name="notification_action_disconnect">断开连接</string>
+
+    <!-- Landscape Mode Resources -->
+    <string name="tab_landscape">📐 横屏模式</string>
+    <string name="landscape_btn_enter">📐 横屏触控</string>
+    <string name="landscape_btn_exit">退出横屏</string>
+    <string name="settings_section_landscape">📐 横屏模式设置</string>
+    <string name="landscape_keyboard_mode_title">横屏键盘输入类型：</string>
+    <string name="landscape_keyboard_mode_fullscreen">全屏模拟实体键盘 (由平板输入法解析，推荐)</string>
+    <string name="landscape_keyboard_mode_fullscreen_desc">像外接物理键盘一样，原生发送 1~0、+、=、退格与字母键，平板端原生拼音候选词上屏</string>
+    <string name="landscape_keyboard_mode_split">半屏/分屏键盘 (触控板 + 手机系统键盘)</string>
+    <string name="landscape_keyboard_mode_split_desc">屏幕一侧保留触控板，另一侧呼出手机自带输入法，支持宽度调节与左右互换</string>
+    <string name="landscape_show_scrollbar_title">横屏显示右侧垂直滚轮胶囊</string>
+    <string name="landscape_show_scrollbar_desc">在横屏右侧边缘悬浮显示垂直滚轮条，滑动可滚动平板页面（默认关闭）</string>
+    <string name="landscape_show_buttons_title">横屏显示底部鼠标左右键</string>
+    <string name="landscape_show_buttons_desc">在横屏底部居中悬浮显示鼠标物理左键与右键胶囊（默认关闭）</string>
+    <string name="disconnect_dialog_title">断开连接</string>
+    <string name="disconnect_dialog_msg">确定要断开与当前平板设备的蓝牙连接吗？</string>
+    <string name="disconnect_dialog_confirm">断开连接</string>
+    <string name="cancel">取消</string>
+    <string name="split_swap_btn">左右互换</string>
+    <string name="split_width_btn">调整宽度</string>
 </resources>

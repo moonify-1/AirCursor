@@ -37,6 +37,16 @@ class WheelBarView @JvmOverloads constructor(
             updateSystemGestureExclusion()
         }
 
+    // 横屏极简悬浮胶囊滚轮样式
+    var isCapsuleStyle: Boolean = false
+        set(value) {
+            field = value
+            if (value) {
+                setBackgroundResource(cn.moonify.aircursor.R.drawable.bg_land_capsule)
+            }
+            invalidate()
+        }
+
     private var downX = 0f
     private var downY = 0f
     private var lastY = 0f
@@ -88,6 +98,28 @@ class WheelBarView @JvmOverloads constructor(
         super.onDraw(canvas)
         val w = width.toFloat()
         val h = height.toFloat()
+
+        if (isCapsuleStyle) {
+            val barColor = androidx.core.content.ContextCompat.getColor(context, cn.moonify.aircursor.R.color.land_wheel_bar)
+            val dotColor = androidx.core.content.ContextCompat.getColor(context, cn.moonify.aircursor.R.color.land_active_tab)
+
+            // Top small dot
+            paint.style = Paint.Style.FILL
+            paint.color = dotColor
+            canvas.drawCircle(w / 2f, 18f * resources.displayMetrics.density, 2.5f * resources.displayMetrics.density, paint)
+
+            // Bottom small dot
+            canvas.drawCircle(w / 2f, h - 18f * resources.displayMetrics.density, 2.5f * resources.displayMetrics.density, paint)
+
+            // Middle horizontal handle bar
+            paint.style = Paint.Style.STROKE
+            paint.color = barColor
+            paint.strokeWidth = 3.5f * resources.displayMetrics.density
+            paint.strokeCap = Paint.Cap.ROUND
+            val insetX = 4f * resources.displayMetrics.density
+            canvas.drawLine(insetX, h / 2f, w - insetX, h / 2f, paint)
+            return
+        }
 
         // Draw central track line
         paint.color = androidx.core.content.ContextCompat.getColor(context, cn.moonify.aircursor.R.color.wheel_track)
