@@ -35,6 +35,11 @@ class HidMouseManager(private val context: Context) {
         const val REPORT_ID_MOUSE: Byte = 2
         const val REPORT_ID_CONSUMER: Byte = 3
 
+        // 多任务后台切换快捷方式模式
+        const val SHORTCUT_RECENTS_OVERVIEW = "recents_overview"
+        const val SHORTCUT_ALT_TAB = "alt_tab"
+        const val SHORTCUT_WIN_TAB = "win_tab"
+
         // Consumer Control 按键掩码 (Report ID 3)
         const val CONSUMER_VOLUME_UP: Byte = 0x01
         const val CONSUMER_VOLUME_DOWN: Byte = 0x02
@@ -42,7 +47,8 @@ class HidMouseManager(private val context: Context) {
         const val CONSUMER_PLAY_PAUSE: Byte = 0x08
         const val CONSUMER_HOME: Byte = 0x10
         const val CONSUMER_BACK: Byte = 0x20
-        const val CONSUMER_APP_SWITCH: Byte = 0x40
+        const val CONSUMER_RECENT_APPS: Byte = 0x40
+        const val CONSUMER_APP_SWITCH: Byte = 0x40 // 兼容别名
         const val CONSUMER_NEXT: Byte = 0x40 // 兼容别名
         const val CONSUMER_PREV: Byte = 0x80.toByte()
 
@@ -148,7 +154,7 @@ class HidMouseManager(private val context: Context) {
             0x09.toByte(), 0xCD.toByte(), //   USAGE (Play/Pause)           -> Bit 3 (0x08)
             0x0A.toByte(), 0x23.toByte(), 0x02.toByte(), // USAGE (AC Home) -> Bit 4 (0x10)
             0x0A.toByte(), 0x24.toByte(), 0x02.toByte(), // USAGE (AC Back) -> Bit 5 (0x20)
-            0x0A.toByte(), 0xA2.toByte(), 0x01.toByte(), // USAGE (AL Select Task/App -> KEYCODE_APP_SWITCH) -> Bit 6 (0x40)
+            0x0A.toByte(), 0x9F.toByte(), 0x02.toByte(), // USAGE (AL Desktop Show All Windows -> RECENT_APPS) -> Bit 6 (0x40)
             0x09.toByte(), 0xB6.toByte(), //   USAGE (Scan Previous Track) -> Bit 7 (0x80)
             0x81.toByte(), 0x02.toByte(), //   INPUT (Data,Var,Abs)
             0xC0.toByte()                // END_COLLECTION
@@ -537,16 +543,18 @@ class HidMouseManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun sendConsumerKey(keyMask: Byte) {
         if (hidMode == MODE_PURE_MOUSE) return
-        val hid = hidDevice ?: return
         val device = connectedDevice ?: return
 
         executor.execute {
             try {
-                hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(keyMask))
-                Thread.sleep(30)
-                hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(0))
+                val press = byteArrayOf(keyMask)
+                sendReportWithRetry(device, REPORT_ID_CONSUMER.toInt(), press, maxRetries = 3)
+                Thread.sleep(50)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to sendConsumerKey $keyMask", e)
+            } finally {
+                val release = byteArrayOf(0)
+                sendReportWithRetry(device, REPORT_ID_CONSUMER.toInt(), release, maxRetries = 5)
             }
         }
     }
@@ -725,10 +733,9 @@ class HidMouseManager(private val context: Context) {
             return
         }
         keyboardExecutor.execute {
-            val hid = hidDevice
             val device = connectedDevice
-            if (hid == null || device == null) {
-                Log.w(TAG, "sendRecentApps: hidDevice=$hid, connectedDevice=$device, cannot send report")
+            if (device == null) {
+                Log.w(TAG, "sendRecentApps: connectedDevice is null, cannot send report")
                 return@execute
             }
             try {
@@ -738,66 +745,91 @@ class HidMouseManager(private val context: Context) {
 
                 // 1. Modifier 按下 (提前 35ms 建立组合键状态)
                 val modDown = byteArrayOf(modifier, 0, 0, 0, 0, 0, 0, 0)
-                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
+                sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), modDown, maxRetries = 3)
                 Thread.sleep(35)
 
                 // 2. Modifier + Tab 同时按下 (保持 120ms，留给平板系统充足的响应、渲染和选定前台目标应用的时间)
                 val tabDown = byteArrayOf(modifier, 0, KEY_TAB, 0, 0, 0, 0, 0)
-                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), tabDown)
+                sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), tabDown, maxRetries = 3)
                 Thread.sleep(120)
 
                 // 3. Tab 释放 (保持 Modifier 80ms，稳定锁定目标应用)
-                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
+                sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), modDown, maxRetries = 3)
                 Thread.sleep(80)
-
-                // 4. 全部释放 (松开 Alt/Meta，触发平板最终切换)
-                val releaseAll = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
-                hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), releaseAll)
-                Thread.sleep(30)
-                Log.d(TAG, "sendRecentApps: successfully sent shortcut (useAltTab=$useAltTab, reverse=$reverse)")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending recent apps shortcut", e)
+            } finally {
+                // 4. 全部释放 (松开 Alt/Meta，触发平板最终切换；重试 5 次确保送达，杜绝按键连击残留)
+                sendKeyboardReleaseSync()
+                Log.d(TAG, "sendRecentApps: finished sending shortcut (useAltTab=$useAltTab, reverse=$reverse)")
             }
         }
     }
 
     /**
      * 发送系统后台应用多任务概览指令，呼出平板后台并保持停留在多任务界面（供用户自主挑选应用）：
-     * 1. 优先通过 Consumer Control 发送原生 APP_SWITCH (Usage 0x01A2 -> Android KEYCODE_APP_SWITCH -> toggleRecentApps())；
-     * 2. 兼容兜底：若指定使用 Win/Meta + Tab 或未重新配对，使用对应组合键。
+     * 1. 默认/SHORTCUT_RECENTS_OVERVIEW: 通过 Consumer Control 发送 0x029F (AL Desktop Show All Windows -> RECENT_APPS)，
+     *    触发 Android 系统 toggleRecentApps()，呼出后台卡片并稳定停留在后台，供用户自主选择应用；
+     * 2. SHORTCUT_ALT_TAB: 用户指定使用 Alt + Tab 实体键盘切换（快速切至上一应用）；
+     * 3. SHORTCUT_WIN_TAB: 用户指定使用 Win/Meta + Tab 组合键（适用于 Windows 掌机/平板或部分 Android 14+ 系统的任务视图）。
      */
-    fun sendOverview(useWinTab: Boolean = false) {
+    fun sendOverview(shortcutMode: String = SHORTCUT_RECENTS_OVERVIEW) {
         if (!isKeyboardSupported) return
-        executor.execute {
-            val hid = hidDevice
-            val device = connectedDevice
-            if (hid == null || device == null) {
-                Log.w(TAG, "sendOverview: hidDevice=$hid, connectedDevice=$device, cannot send report")
-                return@execute
+        val device = connectedDevice
+        if (device == null) {
+            Log.w(TAG, "sendOverview: connectedDevice is null, cannot send report")
+            return
+        }
+
+        when (shortcutMode) {
+            SHORTCUT_ALT_TAB -> {
+                sendRecentApps(useAltTab = true, reverse = false)
             }
-            try {
-                if (useWinTab) {
-                    val modifier = 0x08.toByte() // Left GUI / Meta / Win
-                    val modDown = byteArrayOf(modifier, 0, 0, 0, 0, 0, 0, 0)
-                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
-                    Thread.sleep(30)
-                    val tabDown = byteArrayOf(modifier, 0, KEY_TAB, 0, 0, 0, 0, 0)
-                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), tabDown)
-                    Thread.sleep(80)
-                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), modDown)
-                    Thread.sleep(30)
-                    val releaseAll = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
-                    hid.sendReport(device, REPORT_ID_KEYBOARD.toInt(), releaseAll)
-                } else {
-                    hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(CONSUMER_APP_SWITCH))
-                    Thread.sleep(35)
-                    hid.sendReport(device, REPORT_ID_CONSUMER.toInt(), byteArrayOf(0))
+            SHORTCUT_WIN_TAB -> {
+                keyboardExecutor.execute {
+                    try {
+                        val modifier: Byte = 0x08 // Left GUI / Meta / Win
+                        val modDown = byteArrayOf(modifier, 0, 0, 0, 0, 0, 0, 0)
+                        sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), modDown, maxRetries = 3)
+                        Thread.sleep(35)
+                        val tabDown = byteArrayOf(modifier, 0, KEY_TAB, 0, 0, 0, 0, 0)
+                        sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), tabDown, maxRetries = 3)
+                        Thread.sleep(120)
+                        sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), modDown, maxRetries = 3)
+                        Thread.sleep(60)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to send Win+Tab overview", e)
+                    } finally {
+                        sendKeyboardReleaseSync()
+                        Log.d(TAG, "sendOverview: finished sending Win+Tab")
+                    }
                 }
-                Log.d(TAG, "sendOverview: successfully sent overview trigger (useWinTab=$useWinTab)")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to sendOverview", e)
+            }
+            else -> {
+                // 原生多任务卡片 0x029F RECENT_APPS，Android 系统收到后 toggleRecentApps() 并保持停留
+                executor.execute {
+                    try {
+                        val press = byteArrayOf(CONSUMER_RECENT_APPS)
+                        sendReportWithRetry(device, REPORT_ID_CONSUMER.toInt(), press, maxRetries = 3)
+                        Thread.sleep(60)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to send CONSUMER_RECENT_APPS press", e)
+                    } finally {
+                        val release = byteArrayOf(0)
+                        sendReportWithRetry(device, REPORT_ID_CONSUMER.toInt(), release, maxRetries = 5)
+                        Log.d(TAG, "sendOverview: finished sending CONSUMER_RECENT_APPS (0x029F)")
+                    }
+                }
             }
         }
+    }
+
+    /**
+     * 兼容旧版 Boolean 参数调用
+     */
+    @Deprecated("Use sendOverview(shortcutMode: String)")
+    fun sendOverview(useWinTab: Boolean) {
+        sendOverview(if (useWinTab) SHORTCUT_WIN_TAB else SHORTCUT_RECENTS_OVERVIEW)
     }
 
     /**

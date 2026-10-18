@@ -773,23 +773,67 @@
                     android:orientation="vertical">
 
                     <RadioButton
-                        android:id="@+id/rbShortcutAltTab"
+                        android:id="@+id/rbShortcutOverview"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:checked="true"
+                        android:text="@string/shortcut_overview"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="28dp"
+                        android:layout_marginTop="1dp"
+                        android:text="呼出平板多任务界面后保持停留，让您在卡片列表中从容挑选应用"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbShortcutAltTab"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
                         android:text="@string/shortcut_alt_tab"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="28dp"
+                        android:layout_marginTop="1dp"
+                        android:text="模拟外接键盘 Alt+Tab，在最近使用的两个应用之间直接快速切换"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
 
                     <RadioButton
                         android:id="@+id/rbShortcutWinTab"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="6dp"
                         android:text="@string/shortcut_win_tab"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="28dp"
+                        android:layout_marginTop="1dp"
+                        android:text="发送 Win+Tab 组合键，适用于 Windows 掌机/平板或部分 Android 14+ 系统的任务视图"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
                 </RadioGroup>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="⚠️ 提示：若三指上滑无法呼出后台，说明平板此前缓存了旧版蓝牙描述符，请在平板蓝牙设置中将手机【取消配对】再重新连接一次即可；或直接选择【Alt + Tab】模式。"
+                    android:textColor="@color/accent_amber"
+                    android:textSize="11sp" />
 
                 <View
                     android:layout_width="match_parent"

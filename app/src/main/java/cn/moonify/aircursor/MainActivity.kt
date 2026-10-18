@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity() {
         const val THEME_LIGHT = "day"
         const val THEME_SYSTEM = "system"
 
+        const val SHORTCUT_RECENTS_OVERVIEW = "recents_overview"
         const val SHORTCUT_ALT_TAB = "alt_tab"
         const val SHORTCUT_WIN_TAB = "win_tab"
     }
@@ -645,9 +646,20 @@ class MainActivity : AppCompatActivity() {
             openScreenshotSettings()
         }
 
-        // Recents shortcut mode RadioGroup listener (Alt+Tab vs Win+Tab)
+        // Recents shortcut mode RadioGroup listener (Overview vs Alt+Tab vs Win+Tab)
+        val savedShortcut = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_RECENTS_OVERVIEW)
+        when (savedShortcut) {
+            SHORTCUT_ALT_TAB -> binding.rbShortcutAltTab.isChecked = true
+            SHORTCUT_WIN_TAB -> binding.rbShortcutWinTab.isChecked = true
+            else -> binding.rbShortcutOverview.isChecked = true
+        }
+
         binding.rgRecentsShortcut.setOnCheckedChangeListener { _, checkedId ->
-            val shortcut = if (checkedId == R.id.rbShortcutWinTab) SHORTCUT_WIN_TAB else SHORTCUT_ALT_TAB
+            val shortcut = when (checkedId) {
+                R.id.rbShortcutAltTab -> SHORTCUT_ALT_TAB
+                R.id.rbShortcutWinTab -> SHORTCUT_WIN_TAB
+                else -> SHORTCUT_RECENTS_OVERVIEW
+            }
             prefs.edit().putString(KEY_RECENTS_SHORTCUT, shortcut).apply()
         }
 
@@ -1055,14 +1067,19 @@ class MainActivity : AppCompatActivity() {
     private fun handleThreeFingerOverview(gestureName: String) {
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
-        val useWinTab = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) == SHORTCUT_WIN_TAB
+        val shortcutMode = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_RECENTS_OVERVIEW) ?: SHORTCUT_RECENTS_OVERVIEW
 
         if (rfConnected) {
             rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
             Toast.makeText(this, "$gestureName：已呼出平板后台多任务界面", Toast.LENGTH_SHORT).show()
         } else if (hidConnected && hidMouseManager.isComboMode) {
-            hidMouseManager.sendOverview(useWinTab)
-            Toast.makeText(this, "$gestureName：已呼出平板后台多任务界面", Toast.LENGTH_SHORT).show()
+            hidMouseManager.sendOverview(shortcutMode)
+            val tip = when (shortcutMode) {
+                SHORTCUT_ALT_TAB -> "$gestureName：已发送 Alt+Tab 切换应用"
+                SHORTCUT_WIN_TAB -> "$gestureName：已发送 Win+Tab 切换任务视图"
+                else -> "$gestureName：已呼出平板后台多任务界面并停留"
+            }
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
         } else if (hidConnected && !hidMouseManager.isComboMode) {
             showEnableComboModeDialog(gestureName)
         } else {
@@ -1076,7 +1093,8 @@ class MainActivity : AppCompatActivity() {
     private fun handleDirectAppSwitch(direction: Int) {
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
-        val useAltTab = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) != SHORTCUT_WIN_TAB
+        val shortcutMode = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_RECENTS_OVERVIEW) ?: SHORTCUT_RECENTS_OVERVIEW
+        val useAltTab = (shortcutMode != SHORTCUT_WIN_TAB)
         val reverse = (direction < 0)
         val desc = if (reverse) "三指左滑" else "三指右滑"
 

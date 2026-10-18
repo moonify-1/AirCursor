@@ -60,10 +60,11 @@
     <string name="wheel_direction_inverted">反向 (传统鼠标滚轮方向)</string>
 
     <!-- Gesture & Recents Shortcut -->
-    <string name="shortcut_selection_title">平板后台/应用切换快捷键模式：</string>
-    <string name="shortcut_alt_tab">Alt + Tab (切换应用，推荐大多数平板)</string>
-    <string name="shortcut_win_tab">Win + Tab (任务视图 / 部分系统)</string>
-    <string name="gesture_hint_bottom">💡 提示：支持三指轻点、三指上滑或横滑切换平板应用（推荐三指轻点，免除手机分屏冲突）</string>
+    <string name="shortcut_selection_title">平板后台/多任务快捷键模式：</string>
+    <string name="shortcut_overview">原生多任务卡片 (0x029F RECENT_APPS，停留后台自主选择，推荐)</string>
+    <string name="shortcut_alt_tab">Alt + Tab 实体键盘切换 (通用切应用)</string>
+    <string name="shortcut_win_tab">Win + Tab 任务视图 (Windows / Android 14+)</string>
+    <string name="gesture_hint_bottom">💡 提示：支持三指轻点、三指上滑或横滑切换平板应用（推荐三指轻点，免除手机分屏与截屏冲突）</string>
 
     <!-- HID Modes -->
     <string name="mode_selection_title">蓝牙 HID 工作模式：</string>
