@@ -51,8 +51,8 @@ class VirtualHardwareKeyboardView @JvmOverloads constructor(
     init {
         orientation = VERTICAL
         gravity = Gravity.CENTER
-        val padH = dpToPx(6)
-        val padV = dpToPx(4)
+        val padH = 0
+        val padV = 0
         setPadding(padH, padV, padH, padV)
         buildKeyboardLayout()
     }
@@ -151,7 +151,7 @@ class VirtualHardwareKeyboardView @JvmOverloads constructor(
             val rowLayout = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1.0f).apply {
-                    val m = dpToPx(2)
+                    val m = dpToPx(1)
                     setMargins(0, m, 0, m)
                 }
             }
@@ -168,17 +168,18 @@ class VirtualHardwareKeyboardView @JvmOverloads constructor(
     private fun createKeyButton(key: KeyDef): TextView {
         val tv = TextView(context).apply {
             layoutParams = LayoutParams(0, LayoutParams.MATCH_PARENT, key.weight).apply {
-                val m = dpToPx(2)
+                val m = dpToPx(1)
                 setMargins(m, 0, m, 0)
             }
             gravity = Gravity.CENTER
             text = key.normalText
-            textSize = if (key.normalText.length > 3) 11f else 13.5f
+            textSize = if (key.normalText.length > 3) 12f else 15f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(ContextCompat.getColor(context, R.color.land_key_text))
             setBackgroundResource(if (key.isAccent) R.drawable.bg_hw_key_accent else R.drawable.bg_hw_key)
             isClickable = true
             isFocusable = true
+            setPadding(0, 0, 0, 0)
 
             setOnClickListener {
                 performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)

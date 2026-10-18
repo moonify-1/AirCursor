@@ -40,9 +40,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.hardware.SensorManager
+import android.view.OrientationEventListener
 import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
 import cn.moonify.aircursor.bluetooth.HidMouseManager
@@ -119,6 +122,11 @@ class MainActivity : AppCompatActivity() {
     private var isSplitSwapped = false
     private var splitWidthIndex = 0
 
+    private var orientationEventListener: OrientationEventListener? = null
+    private var lastManualExitTime = 0L
+    private var pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+    private var pendingSensorCount = 0
+
     private var isRightEdgeBackEnabled = true
     private var isCurrentBackSwipeRightEdge = false
     private var isRightEdgeTouchActive = false
@@ -194,6 +202,10 @@ class MainActivity : AppCompatActivity() {
         applyThemeMode(savedTheme, persist = false)
 
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -280,6 +292,7 @@ class MainActivity : AppCompatActivity() {
         setupUI()
         setupListeners()
         setupLandscape()
+        setupOrientationSensor()
         checkAndRequestPermissions()
 
         // 异步预加载离线拼音字典，确保输入中文时零延迟
@@ -930,6 +943,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (orientationEventListener?.canDetectOrientation() == true) {
+            orientationEventListener?.enable()
+        }
         if (connectionManager.isInitialized) {
             updateStatusText()
             refreshPairedDevices()
@@ -937,6 +953,11 @@ class MainActivity : AppCompatActivity() {
                 connectionManager.autoConnectLastDevice(this)
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        orientationEventListener?.disable()
     }
 
     private fun checkAndRequestPermissions() {
@@ -1461,20 +1482,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun enterLandscapeMode() {
+        lastManualExitTime = 0L
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         applyOrientationMode(true)
     }
 
-    private fun exitLandscapeMode() {
+    private fun exitLandscapeMode(isFromSensor: Boolean = false) {
+        if (!isFromSensor) {
+            lastManualExitTime = SystemClock.uptimeMillis()
+        }
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         mainHandler.postDelayed({
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }, 1000)
+        }, 1200)
         applyOrientationMode(false)
     }
 
     private fun applyOrientationMode(isLand: Boolean) {
         isLandscapeMode = isLand
+
+        // 隐藏/恢复系统状态栏（消除顶部时间与电量行），最大化释放全屏键盘与触控空间
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (isLand) {
+            insetsController.hide(WindowInsetsCompat.Type.statusBars())
+        } else {
+            insetsController.show(WindowInsetsCompat.Type.statusBars())
+        }
+
         if (isLand) {
             binding.layoutPortraitContainer.visibility = View.GONE
             binding.layoutLandscapeContainer.visibility = View.VISIBLE
@@ -1635,7 +1670,7 @@ class MainActivity : AppCompatActivity() {
 
         // 退出横屏按钮
         binding.btnLandExit.setOnClickListener {
-            exitLandscapeMode()
+            exitLandscapeMode(isFromSensor = false)
         }
 
         // 5. 底部实体鼠标左右键交互 (真实 Touch Down / Up 事件)
@@ -1686,6 +1721,53 @@ class MainActivity : AppCompatActivity() {
         // 8. 初始化当前屏幕方向
         val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         applyOrientationMode(isLand)
+    }
+
+    private fun setupOrientationSensor() {
+        orientationEventListener = object : OrientationEventListener(this, SensorManager.SENSOR_DELAY_NORMAL) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+
+                val isLandscapeAngle = (orientation in 65..115) || (orientation in 245..295)
+                val isPortraitAngle = (orientation in 0..30) || (orientation in 330..359)
+
+                if (isPortraitAngle) {
+                    lastManualExitTime = 0L
+                }
+
+                if (isLandscapeAngle && !isLandscapeMode) {
+                    val now = SystemClock.uptimeMillis()
+                    if (now - lastManualExitTime < 3000L) return
+
+                    if (pendingSensorOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+                        pendingSensorCount++
+                        if (pendingSensorCount >= 3) {
+                            pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                            pendingSensorCount = 0
+                            enterLandscapeMode()
+                        }
+                    } else {
+                        pendingSensorOrientation = Configuration.ORIENTATION_LANDSCAPE
+                        pendingSensorCount = 1
+                    }
+                } else if (isPortraitAngle && isLandscapeMode) {
+                    if (pendingSensorOrientation == Configuration.ORIENTATION_PORTRAIT) {
+                        pendingSensorCount++
+                        if (pendingSensorCount >= 3) {
+                            pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                            pendingSensorCount = 0
+                            exitLandscapeMode(isFromSensor = true)
+                        }
+                    } else {
+                        pendingSensorOrientation = Configuration.ORIENTATION_PORTRAIT
+                        pendingSensorCount = 1
+                    }
+                } else {
+                    pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                    pendingSensorCount = 0
+                }
+            }
+        }
     }
 
     private fun setupSplitControls() {
@@ -1892,12 +1974,14 @@ class MainActivity : AppCompatActivity() {
         }
         binding.btnDrawerExitLandscape.setOnClickListener {
             binding.drawerLayout.closeDrawer(GravityCompat.START)
-            exitLandscapeMode()
+            exitLandscapeMode(isFromSensor = false)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        orientationEventListener?.disable()
+        orientationEventListener = null
         connectionManager.removeListener(connectionListener)
         TabletRfcommServer.removeListener(tabletServerListener)
         // 注意：不要在此处调用 connectionManager.release()，以便退至后台后继续保持蓝牙连接
