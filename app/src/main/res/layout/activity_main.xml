@@ -853,13 +853,13 @@
                         android:textSize="11sp" />
                 </RadioGroup>
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="⚠️ 提示：若三指上滑无法呼出后台，说明平板此前缓存了旧版蓝牙描述符，请在平板蓝牙设置中将手机【取消配对】再重新连接一次即可；或直接选择【Alt + Tab】模式。"
-                    android:textColor="@color/accent_amber"
-                    android:textSize="11sp" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="💡 提示：若使用【原生多任务卡片】三指上滑无反应，说明平板此前缓存了旧版蓝牙描述符，请在平板蓝牙设置中将手机【取消配对】再重新连接一次即可；亦可直接勾选【Win + Tab】或【Alt + Tab】免重新配对直接生效。"
+                        android:textColor="@color/accent_amber"
+                        android:textSize="11sp" />
 
                 <View
                     android:layout_width="match_parent"
