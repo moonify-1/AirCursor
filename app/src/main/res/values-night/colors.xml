@@ -49,4 +49,7 @@
     <color name="land_key_bg">#36343B</color>
     <color name="land_key_accent_bg">#4A4458</color>
     <color name="land_key_text">#E6E0E9</color>
+    <color name="land_card_bg">#25232A</color>
+    <color name="land_adjust_bar_bg">#36343B</color>
+    <color name="land_adjust_text">#E6E0E9</color>
 </resources>

@@ -28,6 +28,7 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -40,9 +41,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.hardware.SensorManager
+import android.view.OrientationEventListener
 import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
 import cn.moonify.aircursor.bluetooth.HidMouseManager
@@ -94,6 +98,12 @@ class MainActivity : AppCompatActivity() {
 
         const val KEYBOARD_MODE_FULLSCREEN_HW = "fullscreen_hw"
         const val KEYBOARD_MODE_SPLIT_SYSTEM = "split_system"
+
+        const val KEY_KB_CARD_IS_CUSTOM = "kb_card_is_custom"
+        const val KEY_KB_CARD_WIDTH_RATIO = "kb_card_width_ratio"
+        const val KEY_KB_CARD_HEIGHT_RATIO = "kb_card_height_ratio"
+        const val KEY_KB_CARD_POS_X_RATIO = "kb_card_pos_x_ratio"
+        const val KEY_KB_CARD_POS_Y_RATIO = "kb_card_pos_y_ratio"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -116,8 +126,14 @@ class MainActivity : AppCompatActivity() {
 
     private var isLandscapeMode = false
     private var isLandscapeKeyboardActive = false
+    private var isKeyboardAdjustModeActive = false
     private var isSplitSwapped = false
     private var splitWidthIndex = 0
+
+    private var orientationEventListener: OrientationEventListener? = null
+    private var lastManualExitTime = 0L
+    private var pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+    private var pendingSensorCount = 0
 
     private var isRightEdgeBackEnabled = true
     private var isCurrentBackSwipeRightEdge = false
@@ -194,6 +210,13 @@ class MainActivity : AppCompatActivity() {
         applyThemeMode(savedTheme, persist = false)
 
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -280,6 +303,8 @@ class MainActivity : AppCompatActivity() {
         setupUI()
         setupListeners()
         setupLandscape()
+        setupOrientationSensor()
+        setupKeyboardCardAdjustment()
         checkAndRequestPermissions()
 
         // 异步预加载离线拼音字典，确保输入中文时零延迟
@@ -930,6 +955,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (orientationEventListener?.canDetectOrientation() == true) {
+            orientationEventListener?.enable()
+        }
         if (connectionManager.isInitialized) {
             updateStatusText()
             refreshPairedDevices()
@@ -937,6 +965,11 @@ class MainActivity : AppCompatActivity() {
                 connectionManager.autoConnectLastDevice(this)
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        orientationEventListener?.disable()
     }
 
     private fun checkAndRequestPermissions() {
@@ -1461,20 +1494,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun enterLandscapeMode() {
+        lastManualExitTime = 0L
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         applyOrientationMode(true)
     }
 
-    private fun exitLandscapeMode() {
+    private fun exitLandscapeMode(isFromSensor: Boolean = false) {
+        if (!isFromSensor) {
+            lastManualExitTime = SystemClock.uptimeMillis()
+        }
+        setKeyboardAdjustMode(false)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         mainHandler.postDelayed({
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }, 1000)
+        }, 1200)
         applyOrientationMode(false)
     }
 
     private fun applyOrientationMode(isLand: Boolean) {
         isLandscapeMode = isLand
+
+        // 彻底消除横屏下系统状态栏与导航栏残留的空白横条，全屏完全沉浸
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        if (isLand) {
+            // 横屏下关闭 decorFitsSystemWindows，使画面真正 100% 铺满到物理玻璃边缘
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
+        } else {
+            // 竖屏下恢复 decorFitsSystemWindows，确保竖屏状态栏正常沉浸且不与内容重叠
+            setKeyboardAdjustMode(false)
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
+            val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            val barColor = ContextCompat.getColor(this, if (isNight) R.color.bg_dark else R.color.bg_dark)
+            window.statusBarColor = barColor
+            window.navigationBarColor = barColor
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
+
         if (isLand) {
             binding.layoutPortraitContainer.visibility = View.GONE
             binding.layoutLandscapeContainer.visibility = View.VISIBLE
@@ -1521,7 +1592,9 @@ class MainActivity : AppCompatActivity() {
             binding.ivLandTabKeyboard.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_inactive_icon))
 
             binding.landTouchpadView.visibility = View.VISIBLE
-            binding.landVirtualKeyboard.visibility = View.GONE
+            binding.layoutLandKeyboardCardWrapper.visibility = View.GONE
+            binding.btnLandAdjustKeyboard.visibility = View.GONE
+            setKeyboardAdjustMode(false)
             binding.layoutLandSplit.visibility = View.GONE
             dismissLandscapeInput()
             updateLandscapeVisibilitySettings()
@@ -1539,15 +1612,19 @@ class MainActivity : AppCompatActivity() {
 
             val kbMode = prefs.getString(KEY_LANDSCAPE_KEYBOARD_MODE, KEYBOARD_MODE_FULLSCREEN_HW) ?: KEYBOARD_MODE_FULLSCREEN_HW
             if (kbMode == KEYBOARD_MODE_FULLSCREEN_HW) {
-                // 模式 1：全屏模拟实体键盘 (由平板输入法解析)
+                // 模式 1：独立卡片式实体模拟键盘 (支持调节大小与位置)
                 binding.landTouchpadView.visibility = View.GONE
                 binding.layoutLandSplit.visibility = View.GONE
-                binding.landVirtualKeyboard.visibility = View.VISIBLE
+                binding.layoutLandKeyboardCardWrapper.visibility = View.VISIBLE
+                binding.btnLandAdjustKeyboard.visibility = View.VISIBLE
                 dismissLandscapeInput()
+                applyKeyboardCardLayout()
             } else {
                 // 模式 2：半屏/分屏键盘 (触控板 + 手机系统输入法)
                 binding.landTouchpadView.visibility = View.GONE
-                binding.landVirtualKeyboard.visibility = View.GONE
+                binding.layoutLandKeyboardCardWrapper.visibility = View.GONE
+                binding.btnLandAdjustKeyboard.visibility = View.GONE
+                setKeyboardAdjustMode(false)
                 binding.layoutLandSplit.visibility = View.VISIBLE
                 applySplitSwap()
                 applySplitWidth()
@@ -1635,7 +1712,7 @@ class MainActivity : AppCompatActivity() {
 
         // 退出横屏按钮
         binding.btnLandExit.setOnClickListener {
-            exitLandscapeMode()
+            exitLandscapeMode(isFromSensor = false)
         }
 
         // 5. 底部实体鼠标左右键交互 (真实 Touch Down / Up 事件)
@@ -1686,6 +1763,315 @@ class MainActivity : AppCompatActivity() {
         // 8. 初始化当前屏幕方向
         val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         applyOrientationMode(isLand)
+    }
+
+    private fun setupOrientationSensor() {
+        orientationEventListener = object : OrientationEventListener(this, SensorManager.SENSOR_DELAY_NORMAL) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+
+                val isLandscapeAngle = (orientation in 65..115) || (orientation in 245..295)
+                val isPortraitAngle = (orientation in 0..30) || (orientation in 330..359)
+
+                if (isPortraitAngle) {
+                    lastManualExitTime = 0L
+                }
+
+                if (isLandscapeAngle && !isLandscapeMode) {
+                    val now = SystemClock.uptimeMillis()
+                    if (now - lastManualExitTime < 3000L) return
+
+                    if (pendingSensorOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+                        pendingSensorCount++
+                        if (pendingSensorCount >= 3) {
+                            pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                            pendingSensorCount = 0
+                            enterLandscapeMode()
+                        }
+                    } else {
+                        pendingSensorOrientation = Configuration.ORIENTATION_LANDSCAPE
+                        pendingSensorCount = 1
+                    }
+                } else if (isPortraitAngle && isLandscapeMode) {
+                    if (pendingSensorOrientation == Configuration.ORIENTATION_PORTRAIT) {
+                        pendingSensorCount++
+                        if (pendingSensorCount >= 3) {
+                            pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                            pendingSensorCount = 0
+                            exitLandscapeMode(isFromSensor = true)
+                        }
+                    } else {
+                        pendingSensorOrientation = Configuration.ORIENTATION_PORTRAIT
+                        pendingSensorCount = 1
+                    }
+                } else {
+                    pendingSensorOrientation = Configuration.ORIENTATION_UNDEFINED
+                    pendingSensorCount = 0
+                }
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupKeyboardCardAdjustment() {
+        // 顶部“调节键盘”按钮点击：切换调节模式
+        binding.btnLandAdjustKeyboard.setOnClickListener {
+            setKeyboardAdjustMode(!isKeyboardAdjustModeActive)
+        }
+
+        // 调节栏“✓ 完成”按钮
+        binding.btnKeyboardAdjustDone.setOnClickListener {
+            setKeyboardAdjustMode(false)
+        }
+
+        // 调节栏“↺ 还原全屏”按钮
+        binding.btnKeyboardResetFull.setOnClickListener {
+            resetKeyboardToFullScreen()
+        }
+
+        // 1. 拖拽调节栏移动键盘位置 (Drag to Move)
+        var moveTouchStartX = 0f
+        var moveTouchStartY = 0f
+        var cardStartX = 0f
+        var cardStartY = 0f
+
+        val dragTouchListener = View.OnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    moveTouchStartX = event.rawX
+                    moveTouchStartY = event.rawY
+                    cardStartX = binding.cardLandKeyboard.translationX
+                    cardStartY = binding.cardLandKeyboard.translationY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - moveTouchStartX
+                    val dy = event.rawY - moveTouchStartY
+                    val parentW = binding.layoutLandKeyboardCardWrapper.width.toFloat()
+                    val parentH = binding.layoutLandKeyboardCardWrapper.height.toFloat()
+                    val cardW = binding.cardLandKeyboard.width.toFloat()
+                    val cardH = binding.cardLandKeyboard.height.toFloat()
+
+                    val maxX = (parentW - cardW).coerceAtLeast(0f)
+                    val maxY = (parentH - cardH).coerceAtLeast(0f)
+
+                    binding.cardLandKeyboard.translationX = (cardStartX + dx).coerceIn(0f, maxX)
+                    binding.cardLandKeyboard.translationY = (cardStartY + dy).coerceIn(0f, maxY)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    saveKeyboardCustomPositionAndSize()
+                    true
+                }
+                else -> false
+            }
+        }
+        binding.layoutKeyboardAdjustBar.setOnTouchListener(dragTouchListener)
+        binding.tvKeyboardDragHandle.setOnTouchListener(dragTouchListener)
+
+        // 2. 右下角手柄缩放调节 (Resize Bottom-Right)
+        var resizeTouchStartX = 0f
+        var resizeTouchStartY = 0f
+        var startWidth = 0
+        var startHeight = 0
+
+        binding.ivKeyboardResizeCorner.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeTouchStartX = event.rawX
+                    resizeTouchStartY = event.rawY
+                    startWidth = binding.cardLandKeyboard.width
+                    startHeight = binding.cardLandKeyboard.height
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - resizeTouchStartX
+                    val dy = event.rawY - resizeTouchStartY
+                    val parentW = binding.layoutLandKeyboardCardWrapper.width
+                    val parentH = binding.layoutLandKeyboardCardWrapper.height
+
+                    val minW = (parentW * 0.40f).toInt().coerceAtLeast(100)
+                    val maxW = (parentW - binding.cardLandKeyboard.translationX.toInt()).coerceAtLeast(minW)
+                    val minH = (parentH * 0.40f).toInt().coerceAtLeast(100)
+                    val maxH = (parentH - binding.cardLandKeyboard.translationY.toInt()).coerceAtLeast(minH)
+
+                    val newW = (startWidth + dx.toInt()).coerceIn(minW, maxW)
+                    val newH = (startHeight + dy.toInt()).coerceIn(minH, maxH)
+
+                    val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                    lp.width = newW
+                    lp.height = newH
+                    binding.cardLandKeyboard.layoutParams = lp
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    saveKeyboardCustomPositionAndSize()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 3. 左下角手柄缩放调节 (Resize Bottom-Left)
+        var resizeLeftTouchStartX = 0f
+        var resizeLeftTouchStartY = 0f
+        var startLeftWidth = 0
+        var startLeftHeight = 0
+        var startLeftCardX = 0f
+
+        binding.ivKeyboardResizeCornerLeft.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeLeftTouchStartX = event.rawX
+                    resizeLeftTouchStartY = event.rawY
+                    startLeftWidth = binding.cardLandKeyboard.width
+                    startLeftHeight = binding.cardLandKeyboard.height
+                    startLeftCardX = binding.cardLandKeyboard.translationX
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - resizeLeftTouchStartX
+                    val dy = event.rawY - resizeLeftTouchStartY
+                    val parentW = binding.layoutLandKeyboardCardWrapper.width
+                    val parentH = binding.layoutLandKeyboardCardWrapper.height
+
+                    val minW = (parentW * 0.40f).toInt().coerceAtLeast(100)
+                    val minH = (parentH * 0.40f).toInt().coerceAtLeast(100)
+                    val maxH = (parentH - binding.cardLandKeyboard.translationY.toInt()).coerceAtLeast(minH)
+
+                    val clampedNewX = (startLeftCardX + dx).coerceIn(0f, startLeftCardX + startLeftWidth - minW)
+                    val newW = (startLeftWidth + (startLeftCardX - clampedNewX)).toInt().coerceIn(minW, parentW)
+                    val newH = (startLeftHeight + dy.toInt()).coerceIn(minH, maxH)
+
+                    binding.cardLandKeyboard.translationX = clampedNewX
+                    val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                    lp.width = newW
+                    lp.height = newH
+                    binding.cardLandKeyboard.layoutParams = lp
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    saveKeyboardCustomPositionAndSize()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun applyKeyboardCardLayout() {
+        val wrapper = binding.layoutLandKeyboardCardWrapper
+        wrapper.post {
+            val parentW = wrapper.width
+            val parentH = wrapper.height
+            if (parentW <= 0 || parentH <= 0) return@post
+
+            val isCustom = prefs.getBoolean(KEY_KB_CARD_IS_CUSTOM, false)
+            if (!isCustom) {
+                // 默认全屏卡片
+                val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+                lp.height = FrameLayout.LayoutParams.MATCH_PARENT
+                binding.cardLandKeyboard.layoutParams = lp
+                binding.cardLandKeyboard.translationX = 0f
+                binding.cardLandKeyboard.translationY = 0f
+                binding.cardLandKeyboard.radius = if (isKeyboardAdjustModeActive) 12f * resources.displayMetrics.density else 0f
+                binding.cardLandKeyboard.elevation = if (isKeyboardAdjustModeActive) 8f * resources.displayMetrics.density else 0f
+            } else {
+                // 自定义大小与位置
+                val wRatio = prefs.getFloat(KEY_KB_CARD_WIDTH_RATIO, 1.0f).coerceIn(0.40f, 1.0f)
+                val hRatio = prefs.getFloat(KEY_KB_CARD_HEIGHT_RATIO, 1.0f).coerceIn(0.40f, 1.0f)
+                val xRatio = prefs.getFloat(KEY_KB_CARD_POS_X_RATIO, 0.0f).coerceIn(0.0f, 1.0f)
+                val yRatio = prefs.getFloat(KEY_KB_CARD_POS_Y_RATIO, 0.0f).coerceIn(0.0f, 1.0f)
+
+                val targetW = (parentW * wRatio).toInt()
+                val targetH = (parentH * hRatio).toInt()
+                val maxX = (parentW - targetW).coerceAtLeast(0)
+                val maxY = (parentH - targetH).coerceAtLeast(0)
+                val targetX = (parentW * xRatio).coerceIn(0f, maxX.toFloat())
+                val targetY = (parentH * yRatio).coerceIn(0f, maxY.toFloat())
+
+                val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+                lp.width = targetW
+                lp.height = targetH
+                binding.cardLandKeyboard.layoutParams = lp
+                binding.cardLandKeyboard.translationX = targetX
+                binding.cardLandKeyboard.translationY = targetY
+                binding.cardLandKeyboard.radius = 12f * resources.displayMetrics.density
+                binding.cardLandKeyboard.elevation = 6f * resources.displayMetrics.density
+            }
+        }
+    }
+
+    private fun saveKeyboardCustomPositionAndSize() {
+        val parentW = binding.layoutLandKeyboardCardWrapper.width.toFloat()
+        val parentH = binding.layoutLandKeyboardCardWrapper.height.toFloat()
+        if (parentW <= 0f || parentH <= 0f) return
+
+        val cardW = binding.cardLandKeyboard.width.toFloat()
+        val cardH = binding.cardLandKeyboard.height.toFloat()
+        val cardX = binding.cardLandKeyboard.translationX
+        val cardY = binding.cardLandKeyboard.translationY
+
+        // 如果与全屏尺寸几乎一致且没有偏移，视为非自定义全屏
+        val isFull = (cardW >= parentW * 0.98f) && (cardH >= parentH * 0.98f) && (cardX <= parentW * 0.02f) && (cardY <= parentH * 0.02f)
+
+        if (isFull) {
+            prefs.edit().putBoolean(KEY_KB_CARD_IS_CUSTOM, false).apply()
+        } else {
+            prefs.edit()
+                .putBoolean(KEY_KB_CARD_IS_CUSTOM, true)
+                .putFloat(KEY_KB_CARD_WIDTH_RATIO, cardW / parentW)
+                .putFloat(KEY_KB_CARD_HEIGHT_RATIO, cardH / parentH)
+                .putFloat(KEY_KB_CARD_POS_X_RATIO, cardX / parentW)
+                .putFloat(KEY_KB_CARD_POS_Y_RATIO, cardY / parentH)
+                .apply()
+        }
+    }
+
+    private fun resetKeyboardToFullScreen() {
+        prefs.edit().putBoolean(KEY_KB_CARD_IS_CUSTOM, false).apply()
+        val lp = binding.cardLandKeyboard.layoutParams as FrameLayout.LayoutParams
+        lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+        lp.height = FrameLayout.LayoutParams.MATCH_PARENT
+        binding.cardLandKeyboard.layoutParams = lp
+        binding.cardLandKeyboard.translationX = 0f
+        binding.cardLandKeyboard.translationY = 0f
+        binding.cardLandKeyboard.radius = if (isKeyboardAdjustModeActive) 12f * resources.displayMetrics.density else 0f
+        binding.cardLandKeyboard.elevation = if (isKeyboardAdjustModeActive) 8f * resources.displayMetrics.density else 0f
+        Toast.makeText(this, "已还原默认全屏键盘", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setKeyboardAdjustMode(enabled: Boolean) {
+        isKeyboardAdjustModeActive = enabled
+        binding.layoutKeyboardAdjustBar.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.ivKeyboardResizeCorner.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.ivKeyboardResizeCornerLeft.visibility = if (enabled) View.VISIBLE else View.GONE
+
+        val isCustom = prefs.getBoolean(KEY_KB_CARD_IS_CUSTOM, false)
+        val cornerRadiusDp = if (enabled || isCustom) 12f else 0f
+        val elevationDp = if (enabled) 8f else (if (isCustom) 4f else 0f)
+        binding.cardLandKeyboard.radius = cornerRadiusDp * resources.displayMetrics.density
+        binding.cardLandKeyboard.elevation = elevationDp * resources.displayMetrics.density
+
+        // 更新顶部栏“调节键盘”按钮高亮状态
+        binding.btnLandAdjustKeyboard.setBackgroundResource(
+            if (enabled) R.drawable.bg_land_active_tab else R.drawable.bg_land_capsule
+        )
+        binding.ivLandAdjustKeyboard.imageTintList = ColorStateList.valueOf(
+            ContextCompat.getColor(this, if (enabled) R.color.land_active_icon else R.color.land_inactive_icon)
+        )
+        binding.tvLandAdjustKeyboard.setTextColor(
+            ContextCompat.getColor(this, if (enabled) R.color.land_active_icon else R.color.land_key_text)
+        )
+
+        if (enabled) {
+            Toast.makeText(this, "进入键盘调节模式：可拖拽顶部手柄移动位置，拖拽双下角缩放大小", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun setupSplitControls() {
@@ -1892,12 +2278,14 @@ class MainActivity : AppCompatActivity() {
         }
         binding.btnDrawerExitLandscape.setOnClickListener {
             binding.drawerLayout.closeDrawer(GravityCompat.START)
-            exitLandscapeMode()
+            exitLandscapeMode(isFromSensor = false)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        orientationEventListener?.disable()
+        orientationEventListener = null
         connectionManager.removeListener(connectionListener)
         TabletRfcommServer.removeListener(tabletServerListener)
         // 注意：不要在此处调用 connectionManager.release()，以便退至后台后继续保持蓝牙连接
