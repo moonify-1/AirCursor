@@ -1365,19 +1365,61 @@
                 </FrameLayout>
             </LinearLayout>
 
-            <!-- Right Section: Exit Landscape Button -->
-            <ImageButton
-                android:id="@+id/btnLandExit"
-                android:layout_width="34dp"
-                android:layout_height="34dp"
+            <!-- Right Section: Keyboard Adjust & Exit Landscape Buttons -->
+            <LinearLayout
+                android:id="@+id/layoutLandTopRight"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:layout_alignParentEnd="true"
                 android:layout_centerVertical="true"
-                android:background="@drawable/bg_land_capsule"
-                android:contentDescription="退出横屏"
-                android:padding="8dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_stat_aircursor"
-                app:tint="@color/land_inactive_icon" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Keyboard Resize & Reposition Button (Visible in Fullscreen HW Keyboard mode) -->
+                <LinearLayout
+                    android:id="@+id/btnLandAdjustKeyboard"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_land_capsule"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="8dp"
+                    android:visibility="gone">
+
+                    <ImageView
+                        android:id="@+id/ivLandAdjustKeyboard"
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:contentDescription="调节键盘"
+                        android:src="@drawable/ic_width_adjust"
+                        app:tint="@color/land_inactive_icon" />
+
+                    <TextView
+                        android:id="@+id/tvLandAdjustKeyboard"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:text="调节键盘"
+                        android:textColor="@color/land_key_text"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- Exit Landscape Button -->
+                <ImageButton
+                    android:id="@+id/btnLandExit"
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
+                    android:background="@drawable/bg_land_capsule"
+                    android:contentDescription="退出横屏"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_stat_aircursor"
+                    app:tint="@color/land_inactive_icon" />
+            </LinearLayout>
         </RelativeLayout>
 
         <!-- 3. Right Vertical Scrollbar Capsule -->
@@ -1449,9 +1491,9 @@
             </FrameLayout>
         </LinearLayout>
 
-        <!-- 5. Full-Screen Virtual Hardware Keyboard (紧贴左缘与全屏展开) -->
-        <cn.moonify.aircursor.ui.VirtualHardwareKeyboardView
-            android:id="@+id/landVirtualKeyboard"
+        <!-- 5. Virtual Keyboard Card Container (可独立调节大小与位置的卡片) -->
+        <FrameLayout
+            android:id="@+id/layoutLandKeyboardCardWrapper"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:layout_below="@+id/layoutLandTopBar"
@@ -1459,9 +1501,113 @@
             android:layout_marginEnd="0dp"
             android:layout_marginTop="1dp"
             android:layout_marginBottom="0dp"
-            android:background="@android:color/transparent"
-            android:elevation="0dp"
-            android:visibility="gone" />
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:visibility="gone">
+
+            <androidx.cardview.widget.CardView
+                android:id="@+id/cardLandKeyboard"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="top|start"
+                app:cardBackgroundColor="@color/land_card_bg"
+                app:cardCornerRadius="0dp"
+                app:cardElevation="0dp"
+                app:cardPreventCornerOverlap="false"
+                app:cardUseCompatPadding="false">
+
+                <RelativeLayout
+                    android:id="@+id/layoutKeyboardCardInner"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent">
+
+                    <!-- Adjustment Toolbar (Visible in Adjust Mode) -->
+                    <LinearLayout
+                        android:id="@+id/layoutKeyboardAdjustBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="32dp"
+                        android:layout_alignParentTop="true"
+                        android:background="@color/land_adjust_bar_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="8dp"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:id="@+id/tvKeyboardDragHandle"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:gravity="center_vertical"
+                            android:text="✥ 按住此处拖动键盘位置"
+                            android:textColor="@color/land_adjust_text"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+
+                        <Button
+                            android:id="@+id/btnKeyboardResetFull"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:minHeight="0dp"
+                            android:paddingHorizontal="6dp"
+                            android:paddingVertical="0dp"
+                            android:text="↺ 还原全屏"
+                            android:textColor="@color/primary"
+                            android:textSize="11sp" />
+
+                        <Button
+                            android:id="@+id/btnKeyboardAdjustDone"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:layout_marginStart="4dp"
+                            android:minHeight="0dp"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="0dp"
+                            android:text="✓ 完成"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <!-- Virtual Hardware Keyboard View -->
+                    <cn.moonify.aircursor.ui.VirtualHardwareKeyboardView
+                        android:id="@+id/landVirtualKeyboard"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:layout_below="@+id/layoutKeyboardAdjustBar"
+                        android:background="@android:color/transparent" />
+
+                    <!-- Corner Resize Handle (Bottom-Right, Visible in Adjust Mode) -->
+                    <ImageView
+                        android:id="@+id/ivKeyboardResizeCorner"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_alignParentBottom="true"
+                        android:background="@drawable/bg_land_resize_corner"
+                        android:contentDescription="调节大小"
+                        android:padding="8dp"
+                        android:src="@drawable/ic_resize_corner"
+                        android:visibility="gone" />
+
+                    <!-- Left-Corner Resize Handle (Bottom-Left, Visible in Adjust Mode) -->
+                    <ImageView
+                        android:id="@+id/ivKeyboardResizeCornerLeft"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_alignParentStart="true"
+                        android:layout_alignParentBottom="true"
+                        android:background="@drawable/bg_land_resize_corner"
+                        android:contentDescription="调节大小"
+                        android:padding="8dp"
+                        android:scaleX="-1"
+                        android:src="@drawable/ic_resize_corner"
+                        android:visibility="gone" />
+                </RelativeLayout>
+            </androidx.cardview.widget.CardView>
+        </FrameLayout>
 
         <!-- 6. Split-Screen Keyboard & Touchpad Layout -->
         <LinearLayout
