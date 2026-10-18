@@ -713,9 +713,37 @@ class HidMouseManager(private val context: Context) {
     fun sendPasteShortcut() {
         if (!isKeyboardSupported) return
         keyboardExecutor.execute {
+            val device = connectedDevice ?: return@execute
             try {
-                sendKeySync(KEY_V, MODIFIER_LEFT_CTRL, pressHoldMs = 25L, releaseGapMs = 15L)
+                // 1. 先发送 Ctrl Down 报文，确保平板系统与输入法底层完全建立 Ctrl 修饰键按下状态
+                val ctrlDown = byteArrayOf(MODIFIER_LEFT_CTRL, 0, 0, 0, 0, 0, 0, 0)
+                sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), ctrlDown, maxRetries = 3)
+                try {
+                    Thread.sleep(25)
+                } catch (_: InterruptedException) {
+                    return@execute
+                }
+
+                // 2. 保持 Ctrl 的同时按下 V 键，精确触发系统级 Ctrl + V 粘贴快捷指令
+                val pasteDown = byteArrayOf(MODIFIER_LEFT_CTRL, 0, KEY_V, 0, 0, 0, 0, 0)
+                sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), pasteDown, maxRetries = 3)
+                try {
+                    Thread.sleep(35)
+                } catch (_: InterruptedException) {
+                    return@execute
+                }
+
+                // 3. 释放 V 键但继续维持 Ctrl 状态，防止释放抖动
+                sendReportWithRetry(device, REPORT_ID_KEYBOARD.toInt(), ctrlDown, maxRetries = 3)
+                try {
+                    Thread.sleep(20)
+                } catch (_: InterruptedException) {
+                    return@execute
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending paste shortcut", e)
             } finally {
+                // 4. 彻底释放所有按键报文，重试确保清除无按键滞留
                 sendKeyboardReleaseSync()
             }
         }

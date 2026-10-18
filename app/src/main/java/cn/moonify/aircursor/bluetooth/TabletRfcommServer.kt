@@ -12,6 +12,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import cn.moonify.aircursor.ime.RemoteImeService
+import cn.moonify.aircursor.service.AirCursorService
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
@@ -67,6 +68,11 @@ object TabletRfcommServer {
     @SuppressLint("MissingPermission")
     fun start(context: Context) {
         appContext = context.applicationContext
+        // 自动拉起平板端前台保活服务，确保平板切换至任何输入应用时后台不被系统冻结或杀死
+        appContext?.let {
+            AirCursorService.start(it)
+        }
+
         if (isRunning) {
             Log.d(TAG, "TabletRfcommServer already running")
             return
@@ -87,26 +93,26 @@ object TabletRfcommServer {
                 try {
                     Log.d(TAG, "Listening for RFCOMM client on UUID: ${RfcommConstants.AIRCURSOR_UUID}")
                     ss = try {
-                        adapter.listenUsingRfcommWithServiceRecord(
+                        adapter.listenUsingInsecureRfcommWithServiceRecord(
                             RfcommConstants.SERVICE_NAME,
                             RfcommConstants.AIRCURSOR_UUID
                         )
                     } catch (e1: Exception) {
-                        Log.w(TAG, "listenUsingRfcomm AIRCURSOR_UUID failed, trying insecure...", e1)
+                        Log.w(TAG, "listenUsingInsecure AIRCURSOR_UUID failed, trying secure...", e1)
                         try {
-                            adapter.listenUsingInsecureRfcommWithServiceRecord(
+                            adapter.listenUsingRfcommWithServiceRecord(
                                 RfcommConstants.SERVICE_NAME,
                                 RfcommConstants.AIRCURSOR_UUID
                             )
                         } catch (e2: Exception) {
-                            Log.w(TAG, "listenUsingInsecure AIRCURSOR_UUID failed, trying SPP_UUID fallback...", e2)
+                            Log.w(TAG, "listenUsingRfcomm AIRCURSOR_UUID failed, trying SPP_UUID fallback...", e2)
                             try {
-                                adapter.listenUsingRfcommWithServiceRecord(
+                                adapter.listenUsingInsecureRfcommWithServiceRecord(
                                     RfcommConstants.SERVICE_NAME,
                                     RfcommConstants.SPP_UUID
                                 )
                             } catch (e3: Exception) {
-                                adapter.listenUsingInsecureRfcommWithServiceRecord(
+                                adapter.listenUsingRfcommWithServiceRecord(
                                     RfcommConstants.SERVICE_NAME,
                                     RfcommConstants.SPP_UUID
                                 )
@@ -116,7 +122,7 @@ object TabletRfcommServer {
 
                     while (isRunning) {
                         val socket = try {
-                            ss.accept()
+                            ss?.accept() ?: break
                         } catch (e: IOException) {
                             if (!isRunning) {
                                 Log.d(TAG, "Server socket closed intentionally")
@@ -246,18 +252,25 @@ object TabletRfcommServer {
             return RfcommConstants.ACK_COMMITTED
         } else {
             // 平板保留默认输入法（如 vivo 输入法）：执行剪贴板中继写入
-            mainHandler.post {
-                try {
-                    val ctx = appContext
-                    if (ctx != null) {
-                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        val clip = ClipData.newPlainText("AirCursor", text)
-                        cm?.setPrimaryClip(clip)
-                        Log.d(TAG, "Copied text to clipboard via relay: '$text'")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to copy text to clipboard", e)
+            // 注意：此处必须先同步写入剪贴板，随后向手机返回 ACK_PASTE，手机才能发送物理 Ctrl+V 准确粘贴！
+            try {
+                val ctx = appContext
+                if (ctx != null) {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val clip = ClipData.newPlainText("AirCursor", text)
+                    cm?.setPrimaryClip(clip)
+                    Log.d(TAG, "Copied text to clipboard via relay: '$text'")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to copy text to clipboard", e)
+            }
+
+            // 预留 35ms 等待 Android 系统 ClipboardService 完成跨进程数据同步与系统广播
+            try {
+                Thread.sleep(35)
+            } catch (_: InterruptedException) {}
+
+            mainHandler.post {
                 for (l in listeners) {
                     l.onTextReceived(text, isCommittedDirectly = false)
                 }

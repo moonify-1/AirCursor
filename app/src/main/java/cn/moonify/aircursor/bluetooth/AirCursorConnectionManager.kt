@@ -81,6 +81,8 @@ class AirCursorConnectionManager private constructor() {
 
     private var reconnectRunnable: Runnable? = null
     private var watchdogRunnable: Runnable? = null
+    private var rfcommWatchdogRunnable: Runnable? = null
+    private val RFCOMM_WATCHDOG_INTERVAL_MS = 3000L
 
     fun init(context: Context) {
         if (isInitialized) return
@@ -103,7 +105,10 @@ class AirCursorConnectionManager private constructor() {
                 Log.d(TAG, "HID onConnectionStateChanged: device=${device?.address}, state=$state")
                 if (state == BluetoothProfile.STATE_CONNECTED) {
                     onDeviceConnected(device)
+                    ensureRfcommConnected(device)
+                    startRfcommWatchdog()
                 } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
+                    stopRfcommWatchdog()
                     onDeviceDisconnected(device, isFromHid = true)
                 }
                 notifyStateChanged()
@@ -116,6 +121,10 @@ class AirCursorConnectionManager private constructor() {
                 if (state == RfcommClientManager.STATE_CONNECTED) {
                     onDeviceConnected(device)
                 } else if (state == RfcommClientManager.STATE_DISCONNECTED) {
+                    // 若 HID 仍处于连接中且非手动断开，确保看门狗继续在后台尝试静默握手
+                    if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED && !isManualDisconnect) {
+                        startRfcommWatchdog()
+                    }
                     onDeviceDisconnected(device, isFromHid = false)
                 }
                 notifyStateChanged()
@@ -390,6 +399,7 @@ class AirCursorConnectionManager private constructor() {
         isReconnecting = false
         reconnectAttempt = 0
         cancelPendingReconnect()
+        stopRfcommWatchdog()
     }
 
     /**
@@ -407,9 +417,54 @@ class AirCursorConnectionManager private constructor() {
         appContext?.let { AirCursorService.start(it) }
 
         hidMouseManager.connect(device)
-        rfcommClientManager.connect(device, silentIfFailed = hidMouseManager.isComboMode)
+        rfcommClientManager.connect(device, silentIfFailed = true)
+        startRfcommWatchdog()
 
         notifyStateChanged()
+    }
+
+    /**
+     * 确保 RFCOMM 串口通道与平板处于连通状态（若断开则在后台静默发起连接）
+     */
+    fun ensureRfcommConnected(device: BluetoothDevice? = null) {
+        if (isManualDisconnect) return
+        val target = device ?: targetDevice ?: hidMouseManager.connectedDevice ?: getLastSavedDevice() ?: return
+        if (rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED ||
+            rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTING) {
+            return
+        }
+        Log.d(TAG, "ensureRfcommConnected: requesting connection to ${target.address}")
+        rfcommClientManager.connect(target, silentIfFailed = true)
+    }
+
+    /**
+     * 启动 RFCOMM 后台守护轮询：当 HID 已连上平板但平板尚未打开 AirCursor 或串口尚未握手时，
+     * 每 3 秒自动静默重试一次握手，平板一旦开启软件即可零人工干预自动建立 100% 剪贴板直通通道！
+     */
+    fun startRfcommWatchdog() {
+        stopRfcommWatchdog()
+        if (isManualDisconnect) return
+        rfcommWatchdogRunnable = object : Runnable {
+            override fun run() {
+                if (isManualDisconnect) return
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    if (rfcommClientManager.connectionState == RfcommClientManager.STATE_DISCONNECTED) {
+                        val device = hidMouseManager.connectedDevice ?: targetDevice ?: getLastSavedDevice()
+                        if (device != null) {
+                            Log.d(TAG, "RFCOMM Watchdog: HID is connected, attempting RFCOMM connection to ${device.address}")
+                            rfcommClientManager.connect(device, silentIfFailed = true)
+                        }
+                    }
+                    mainHandler.postDelayed(this, RFCOMM_WATCHDOG_INTERVAL_MS)
+                }
+            }
+        }
+        mainHandler.postDelayed(rfcommWatchdogRunnable!!, 1000L)
+    }
+
+    fun stopRfcommWatchdog() {
+        rfcommWatchdogRunnable?.let { mainHandler.removeCallbacks(it) }
+        rfcommWatchdogRunnable = null
     }
 
     /**

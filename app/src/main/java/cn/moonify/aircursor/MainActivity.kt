@@ -47,6 +47,7 @@ import cn.moonify.aircursor.bluetooth.TabletRfcommServer
 import cn.moonify.aircursor.bluetooth.TouchContact
 import cn.moonify.aircursor.databinding.ActivityMainBinding
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.experimental.and
 import kotlin.experimental.inv
 import kotlin.experimental.or
@@ -123,6 +124,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val tabletServerListener = object : TabletRfcommServer.Listener {
+        override fun onServerStateChanged(isRunning: Boolean, connectedClients: Int) {
+            runOnUiThread { updateStatusText() }
+        }
+
+        override fun onTextReceived(text: String, isCommittedDirectly: Boolean) {
+            runOnUiThread {
+                val mode = if (isCommittedDirectly) "直接落字" else "剪贴板中继"
+                Toast.makeText(this@MainActivity, "平板收到文本 ($mode): $text", Toast.LENGTH_SHORT).show()
+                updateStatusText()
+            }
+        }
+    }
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -160,6 +175,7 @@ class MainActivity : AppCompatActivity() {
 
         connectionManager.init(applicationContext)
         connectionManager.addListener(connectionListener)
+        TabletRfcommServer.addListener(tabletServerListener)
 
         // 返回键行为：若当前在设置页，则返回鼠标页；若当前连接中或正在保持连接，则退到后台，防止意外断开
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -706,6 +722,7 @@ class MainActivity : AppCompatActivity() {
                     binding.etInput.post { setInputModeActive(true) }
                 }
                 showSoftKeyboard()
+                connectionManager.ensureRfcommConnected()
             }
         }
         binding.etInput.setOnClickListener {
@@ -713,6 +730,7 @@ class MainActivity : AppCompatActivity() {
                 binding.etInput.post { setInputModeActive(true) }
             }
             showSoftKeyboard()
+            connectionManager.ensureRfcommConnected()
         }
 
         // 监听软键盘折叠/收起：当用户关闭软键盘时（且软键盘曾经处于展开状态），自动退出输入状态并恢复上方目标平板和鼠标触控栏
@@ -761,14 +779,15 @@ class MainActivity : AppCompatActivity() {
      * 1. 串口已连接时（免切输入法直通 / 方案B）：
      *    手机通过 RFCOMM 将文本送达平板系统剪贴板，平板回复 ACK_PASTE 后手机立即通过 HID 发送 Ctrl+V 触发精准粘贴！
      *    （若平板开启了 AirCursor 输入法，则由 IME 直接 commitText 落字，零延迟 100% 绝对精准）；
-     * 2. 串口未连接时（走 HID 直连 / 方案C）：自动将中文转译为拼音击键并映射中英文标点，模拟外接物理键盘选词上屏；
-     * 3. 纯鼠标模式且串口未连接时：友好弹出 Toast 提示开启复合模式。
+     * 2. 串口连接中时：异步等待最多 350ms 优先走剪贴板通道，避免瞬间回退打拼音；
+     * 3. 串口未连接时（走 HID 直连 / 方案C）：自动将中文转译为拼音击键并映射中英文标点，同时自动触发后台重连；
+     * 4. 纯鼠标模式且串口未连接时：友好弹出 Toast 提示开启复合模式或在平板端开启 AirCursor。
      */
     private fun sendTextToTablet(text: String) {
-        val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        val rfState = rfcommClientManager.connectionState
         val hidConnected = hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED
 
-        if (rfConnected) {
+        if (rfState == RfcommClientManager.STATE_CONNECTED) {
             rfcommClientManager.sendText(text) { ack ->
                 if (ack == RfcommConstants.ACK_PASTE) {
                     // 平板端已将原始文本安全写入系统剪贴板，手机立即发送物理 Ctrl+V 触发精准粘贴！
@@ -776,14 +795,34 @@ class MainActivity : AppCompatActivity() {
                 }
                 // 若 ack == ACK_COMMITTED，说明平板使用 AirCursor 输入法并已由 IME commitText 直接上屏，无需发送 Ctrl+V
             }
-        } else if (hidConnected && hidMouseManager.isComboMode) {
-            hidMouseManager.sendChineseTextAsPinyin(text)
-        } else if (hidConnected && !hidMouseManager.isComboMode) {
-            Toast.makeText(
-                this,
-                "当前为纯鼠标模式。输入中文请在设置中开启【外接键盘复合模式】或在平板开启 AirCursor",
-                Toast.LENGTH_LONG
-            ).show()
+        } else if (rfState == RfcommClientManager.STATE_CONNECTING) {
+            // RFCOMM 正在后台握手（如刚点输入框预热中），稍等最多 350ms 尝试走剪贴板通道，避免瞬间回退打拼音
+            Executors.newSingleThreadScheduledExecutor().schedule({
+                runOnUiThread {
+                    if (rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED) {
+                        rfcommClientManager.sendText(text) { ack ->
+                            if (ack == RfcommConstants.ACK_PASTE) {
+                                hidMouseManager.sendPasteShortcut()
+                            }
+                        }
+                    } else if (hidConnected && hidMouseManager.isComboMode) {
+                        hidMouseManager.sendChineseTextAsPinyin(text)
+                    }
+                }
+            }, 350, TimeUnit.MILLISECONDS)
+        } else if (hidConnected) {
+            // RFCOMM 尚未建立，主动触发一次连接并提示
+            connectionManager.ensureRfcommConnected()
+            if (hidMouseManager.isComboMode) {
+                Toast.makeText(this, "剪贴板通道连接中，当前临时使用拼音打字。请确保平板已打开 AirCursor", Toast.LENGTH_SHORT).show()
+                hidMouseManager.sendChineseTextAsPinyin(text)
+            } else {
+                Toast.makeText(
+                    this,
+                    "当前为纯鼠标模式且剪贴板通道未连。请在平板开启 AirCursor 或在设置开启【外接键盘复合模式】",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         } else {
             Toast.makeText(this, "未连接平板设备，无法发送文本", Toast.LENGTH_SHORT).show()
         }
@@ -834,6 +873,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onPermissionsGranted() {
+        TabletRfcommServer.start(applicationContext)
         connectionManager.init(applicationContext)
         refreshPairedDevices()
         // 每次打开时，尝试自动连接上次已连接成功的设备
@@ -931,15 +971,21 @@ class MainActivity : AppCompatActivity() {
 
         val rfState = rfcommClientManager.connectionState
         val rfStateStr = when (rfState) {
-            RfcommClientManager.STATE_CONNECTED -> "串口通道: 已连接"
-            RfcommClientManager.STATE_CONNECTING -> "串口通道: 连接中…"
-            else -> if (hidMouseManager.isComboMode) "串口: 未开启(走HID直连)" else "串口通道: 未连接"
+            RfcommClientManager.STATE_CONNECTED -> "剪贴板直通: 已连接"
+            RfcommClientManager.STATE_CONNECTING -> "剪贴板通道: 连接中…"
+            else -> if (TabletRfcommServer.isRunning && TabletRfcommServer.connectedClientCount > 0) {
+                "平板接收中继: 已连${TabletRfcommServer.connectedClientCount}台设备"
+            } else if (hidMouseManager.isComboMode) {
+                "剪贴板通道: 未连接(走HID拼音)"
+            } else {
+                "剪贴板通道: 未连接"
+            }
         }
 
         val fullStatus = "$hidStateStr  |  $rfStateStr"
         binding.tvStatus.text = fullStatus
 
-        if (hidState == BluetoothProfile.STATE_CONNECTED) {
+        if (hidState == BluetoothProfile.STATE_CONNECTED || (TabletRfcommServer.isRunning && TabletRfcommServer.connectedClientCount > 0)) {
             binding.tvStatus.setTextColor(Color.parseColor("#10B981")) // Green
         } else if (hidState == BluetoothProfile.STATE_CONNECTING || rfState == RfcommClientManager.STATE_CONNECTING) {
             binding.tvStatus.setTextColor(Color.parseColor("#F59E0B")) // Amber
@@ -1012,9 +1058,16 @@ class MainActivity : AppCompatActivity() {
 
         // 3. Mode Badge
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
+        val rfConnecting = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTING
         when {
+            TabletRfcommServer.isRunning && TabletRfcommServer.connectedClientCount > 0 -> {
+                updateBadge(binding.tvBadgeCombo, "📱 平板中继 (${TabletRfcommServer.connectedClientCount}台已连)", R.color.accent_green, R.color.accent_green_bg)
+            }
             rfConnected -> {
                 updateBadge(binding.tvBadgeCombo, "⚡ 剪贴板直通 (100%精准)", R.color.accent_green, R.color.accent_green_bg)
+            }
+            rfConnecting -> {
+                updateBadge(binding.tvBadgeCombo, "○ 剪贴板直通连接中", R.color.accent_amber, R.color.accent_amber_bg)
             }
             hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD -> {
                 updateBadge(binding.tvBadgeCombo, "✨ 智能触控板", R.color.primary, R.color.tab_bg)
@@ -1214,6 +1267,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         connectionManager.removeListener(connectionListener)
+        TabletRfcommServer.removeListener(tabletServerListener)
         // 注意：不要在此处调用 connectionManager.release()，以便退至后台后继续保持蓝牙连接
     }
 }

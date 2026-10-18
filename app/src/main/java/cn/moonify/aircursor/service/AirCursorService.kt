@@ -85,11 +85,23 @@ class AirCursorService : Service() {
         }
     }
 
+    private val tabletServerListener = object : TabletRfcommServer.Listener {
+        override fun onServerStateChanged(isRunning: Boolean, connectedClients: Int) {
+            updateNotification()
+            checkWakeLock()
+        }
+
+        override fun onTextReceived(text: String, isCommittedDirectly: Boolean) {
+            updateNotification()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "AirCursorService onCreate")
         connectionManager.init(applicationContext)
         connectionManager.addListener(connectionListener)
+        TabletRfcommServer.addListener(tabletServerListener)
         TabletRfcommServer.start(applicationContext)
         createNotificationChannel()
     }
@@ -125,13 +137,14 @@ class AirCursorService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "AirCursorService onDestroy")
+        TabletRfcommServer.removeListener(tabletServerListener)
         connectionManager.removeListener(connectionListener)
         releaseWakeLock()
     }
 
     @SuppressLint("WakelockTimeout")
     private fun checkWakeLock() {
-        if (connectionManager.isConnectedOrConnecting()) {
+        if (connectionManager.isConnectedOrConnecting() || TabletRfcommServer.isRunning) {
             if (wakeLock == null) {
                 val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
                 wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AirCursor:ServiceWakeLock")?.apply {
@@ -208,6 +221,10 @@ class AirCursorService : Service() {
         val content: String
 
         when {
+            TabletRfcommServer.connectedClientCount > 0 -> {
+                title = "AirCursor 平板中继服务"
+                content = "已连接 ${TabletRfcommServer.connectedClientCount} 台手机 (剪贴板自动粘贴就绪)"
+            }
             connectionManager.isConnected() -> {
                 title = getString(R.string.notification_title_connected)
                 content = "已连接: $deviceName (后台运行中)"
@@ -225,6 +242,10 @@ class AirCursorService : Service() {
             connectionManager.isConfirmedUnreachable -> {
                 title = "AirCursor 连接已断开"
                 content = "重试已结束：无法连接至 $deviceName"
+            }
+            TabletRfcommServer.isRunning -> {
+                title = "AirCursor 平板中继服务"
+                content = "正在后台监听手机连接 (剪贴板中继就绪)"
             }
             else -> {
                 title = getString(R.string.notification_title_idle)
