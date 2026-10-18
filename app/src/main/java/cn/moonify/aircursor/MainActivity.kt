@@ -461,14 +461,6 @@ class MainActivity : AppCompatActivity() {
             binding.rbWheelInverted.isChecked = true
         }
 
-        // Recents shortcut setup (default: Alt + Tab)
-        val savedShortcut = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_ALT_TAB) ?: SHORTCUT_ALT_TAB
-        if (savedShortcut == SHORTCUT_WIN_TAB) {
-            binding.rbShortcutWinTab.isChecked = true
-        } else {
-            binding.rbShortcutAltTab.isChecked = true
-        }
-
         // Initialize Touchpad mode
         val isNative = (hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD)
         binding.touchpadView.isNativeTouchpadMode = isNative
@@ -1253,10 +1245,7 @@ class MainActivity : AppCompatActivity() {
         val rfConnected = rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED
         val shortcutMode = prefs.getString(KEY_RECENTS_SHORTCUT, SHORTCUT_RECENTS_OVERVIEW) ?: SHORTCUT_RECENTS_OVERVIEW
 
-        if (rfConnected) {
-            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-            Toast.makeText(this, "$gestureName：已呼出平板后台多任务界面", Toast.LENGTH_SHORT).show()
-        } else if (hidConnected && hidMouseManager.isComboMode) {
+        if (hidConnected && hidMouseManager.isComboMode) {
             hidMouseManager.sendOverview(shortcutMode)
             val tip = when (shortcutMode) {
                 SHORTCUT_ALT_TAB -> "$gestureName：已发送 Alt+Tab 切换应用"
@@ -1266,6 +1255,9 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
         } else if (hidConnected && !hidMouseManager.isComboMode) {
             showEnableComboModeDialog(gestureName)
+        } else if (rfConnected) {
+            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
+            Toast.makeText(this, "$gestureName：已通过串口呼出平板后台多任务界面", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
         }
@@ -1282,10 +1274,7 @@ class MainActivity : AppCompatActivity() {
         val reverse = (direction < 0)
         val desc = if (reverse) "三指左滑" else "三指右滑"
 
-        if (rfConnected) {
-            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-            Toast.makeText(this, "$desc：已通过串口切换应用", Toast.LENGTH_SHORT).show()
-        } else if (hidConnected && hidMouseManager.isComboMode) {
+        if (hidConnected && hidMouseManager.isComboMode) {
             hidMouseManager.sendRecentApps(useAltTab, reverse)
             val shortcutDesc = if (useAltTab) {
                 if (reverse) "Alt + Shift + Tab" else "Alt + Tab"
@@ -1295,6 +1284,9 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "$desc：已发送 $shortcutDesc 切换应用", Toast.LENGTH_SHORT).show()
         } else if (hidConnected && !hidMouseManager.isComboMode) {
             showEnableComboModeDialog(desc)
+        } else if (rfConnected) {
+            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
+            Toast.makeText(this, "$desc：已通过串口切换应用", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "未连接平板设备", Toast.LENGTH_SHORT).show()
         }

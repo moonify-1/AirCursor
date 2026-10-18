@@ -214,10 +214,10 @@ class BlackScreenTouchpadActivity : AppCompatActivity() {
 
         binding.touchpadView.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
 
-        if (rfConnected) {
-            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-        } else if (hidConnected && hidMouseManager.isComboMode) {
+        if (hidConnected && hidMouseManager.isComboMode) {
             hidMouseManager.sendOverview(shortcutMode)
+        } else if (rfConnected) {
+            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
         }
     }
 
@@ -230,10 +230,10 @@ class BlackScreenTouchpadActivity : AppCompatActivity() {
 
         binding.touchpadView.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
 
-        if (rfConnected) {
-            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
-        } else if (hidConnected && hidMouseManager.isComboMode) {
+        if (hidConnected && hidMouseManager.isComboMode) {
             hidMouseManager.sendRecentApps(useAltTab, reverse)
+        } else if (rfConnected) {
+            rfcommClientManager.sendCommand(RfcommConstants.CMD_RECENTS)
         }
     }
 
