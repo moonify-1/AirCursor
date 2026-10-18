@@ -60,6 +60,8 @@
     <string name="wheel_direction_inverted">反向 (传统鼠标滚轮方向)</string>
 
     <!-- Gesture & Recents Shortcut -->
+    <string name="setting_right_edge_back_title">手机右侧侧滑映射平板返回键</string>
+    <string name="setting_right_edge_back_desc">从手机右侧边缘向内侧滑返回时直接触发平板的系统返回键，并屏蔽手机自身的退出行为；左侧边缘侧滑仍保留手机退至后台功能</string>
     <string name="shortcut_selection_title">平板后台/多任务快捷键模式：</string>
     <string name="shortcut_overview">原生多任务卡片 (0x029F RECENT_APPS，停留后台自主选择，推荐)</string>
     <string name="shortcut_alt_tab">Alt + Tab 实体键盘切换 (通用切应用)</string>

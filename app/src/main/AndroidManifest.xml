@@ -34,6 +34,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:resizeableActivity="false"
+        android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.AirCursor">
 
         <activity

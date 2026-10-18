@@ -448,6 +448,24 @@ class AirCursorConnectionManager private constructor() {
     }
 
     /**
+     * 发送系统返回键指令至平板（同时通过 HID Consumer Control / 鼠标侧键与 RFCOMM SPP 双通道）
+     */
+    fun sendSystemBack() {
+        if (!isInitialized) return
+        try {
+            if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                hidMouseManager.sendBack()
+            }
+            if (rfcommClientManager.connectionState == RfcommClientManager.STATE_CONNECTED) {
+                rfcommClientManager.sendCommand(RfcommConstants.CMD_BACK)
+            }
+            Log.d(TAG, "sendSystemBack dispatched successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in sendSystemBack", e)
+        }
+    }
+
+    /**
      * 断开所有连接
      */
     fun disconnectAll(manual: Boolean = true) {

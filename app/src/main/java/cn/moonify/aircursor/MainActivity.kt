@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.HapticFeedbackConstants
@@ -30,6 +31,7 @@ import android.widget.ArrayAdapter
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -50,6 +52,7 @@ import java.util.concurrent.Executors
 import kotlin.experimental.and
 import kotlin.experimental.inv
 import kotlin.experimental.or
+import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
 
@@ -67,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         const val KEY_RECENTS_SHORTCUT = "recents_shortcut"
         const val KEY_SHOW_MOUSE_BUTTONS = "show_mouse_buttons"
         const val KEY_ANTI_SCREENSHOT = "anti_screenshot"
+        const val KEY_RIGHT_EDGE_BACK = "right_edge_back_mapping"
         const val KEY_DONT_SHOW_BLACK_SCREEN_DIALOG = "dont_show_black_screen_dialog"
 
         const val THEME_NIGHT = "night"
@@ -95,6 +99,16 @@ class MainActivity : AppCompatActivity() {
 
     private var isInputModeActive = false
     private var wasKeyboardVisible = false
+
+    private var isRightEdgeBackEnabled = true
+    private var isCurrentBackSwipeRightEdge = false
+    private var isRightEdgeTouchActive = false
+    private var hasRightEdgeSwipedInward = false
+    private var lastRightEdgeDownX = 0f
+    private var lastRightEdgeDownY = 0f
+    private var lastRightEdgeDownTime = 0L
+    private var wasRightEdgeCancelledBySystem = false
+    private var lastRightEdgeBackTriggerTime = 0L
 
     private val connectionListener = object : AirCursorConnectionManager.Listener {
         override fun onStateChanged() {
@@ -161,13 +175,52 @@ class MainActivity : AppCompatActivity() {
         connectionManager.init(applicationContext)
         connectionManager.addListener(connectionListener)
 
-        // 返回键行为：若当前在设置页，则返回鼠标页；若当前连接中或正在保持连接，则退到后台，防止意外断开
+        // 返回键行为：
+        // 1. 若开启了右侧侧滑返回映射，且手势来源于右侧边缘：向平板发送系统 Back，同时屏蔽手机退出（不退后台、原地保持）；
+        // 2. 若当前在设置页，且不是从右侧滑动触发平板返回，则返回鼠标页；
+        // 3. 否则（左侧边缘滑动或三键虚拟返回键）：若连接中则退到后台保活，未连接则正常退出应用。
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                // Android 14+ Predictive Back 手势：0 为左边缘 (EDGE_LEFT)，1 为右边缘 (EDGE_RIGHT)
+                isCurrentBackSwipeRightEdge = (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT)
+                Log.d(TAG, "handleOnBackStarted: swipeEdge=${backEvent.swipeEdge}, isRight=$isCurrentBackSwipeRightEdge")
+            }
+
+            override fun handleOnBackCancelled() {
+                isCurrentBackSwipeRightEdge = false
+                isRightEdgeTouchActive = false
+                hasRightEdgeSwipedInward = false
+                wasRightEdgeCancelledBySystem = false
+            }
+
             override fun handleOnBackPressed() {
+                val now = SystemClock.uptimeMillis()
+                val isRecentRightDown = (isRightEdgeTouchActive || wasRightEdgeCancelledBySystem) && (now - lastRightEdgeDownTime < 1200L)
+                val isRecentRightSwipe = hasRightEdgeSwipedInward && (now - lastRightEdgeDownTime < 1200L)
+                val isRightEdge = isCurrentBackSwipeRightEdge || isRecentRightDown || isRecentRightSwipe
+
+                Log.d(TAG, "handleOnBackPressed: isRightEdge=$isRightEdge, startedRight=$isCurrentBackSwipeRightEdge, recentDown=$isRecentRightDown, recentSwipe=$isRecentRightSwipe, enabled=$isRightEdgeBackEnabled, connected=${connectionManager.isConnectedOrConnecting()}")
+
+                // 重置手势状态
+                isCurrentBackSwipeRightEdge = false
+                isRightEdgeTouchActive = false
+                hasRightEdgeSwipedInward = false
+                wasRightEdgeCancelledBySystem = false
+
+                // 核心功能：手机右侧侧滑返回映射平板系统返回键，手机屏蔽返回效果
+                // 无论是否已连接平板，右边缘返回手势均由 AirCursor 原地消费，绝对不退出软件！
+                if (isRightEdgeBackEnabled && isRightEdge) {
+                    triggerTabletBack()
+                    return
+                }
+
+                // 若在设置页，且不是右侧边缘映射手势，则返回鼠标页
                 if (binding.layoutSettingsContainer.visibility == View.VISIBLE) {
                     switchTab(true)
                     return
                 }
+
+                // 手机原生返回行为（左侧滑动或三键返回）：连接中退后台保活，未连接正常退出
                 if (connectionManager.isConnectedOrConnecting()) {
                     moveTaskToBack(true)
                     Toast.makeText(this@MainActivity, "AirCursor 正在后台保持连接", Toast.LENGTH_SHORT).show()
@@ -197,7 +250,87 @@ class MainActivity : AppCompatActivity() {
         if (ev.pointerCount >= 3) {
             binding.root.requestDisallowInterceptTouchEvent(true)
         }
+
+        // 检测手机右侧边缘滑动手势（用于非预测性返回场景及直接内滑识别兜底）
+        if (isRightEdgeBackEnabled) {
+            val screenWidth = resources.displayMetrics.widthPixels
+            val edgeThreshold = 48f * resources.displayMetrics.density
+
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (ev.rawX >= screenWidth - edgeThreshold) {
+                        isRightEdgeTouchActive = true
+                        hasRightEdgeSwipedInward = false
+                        wasRightEdgeCancelledBySystem = false
+                        lastRightEdgeDownX = ev.rawX
+                        lastRightEdgeDownY = ev.rawY
+                        lastRightEdgeDownTime = SystemClock.uptimeMillis()
+                    } else {
+                        isRightEdgeTouchActive = false
+                        hasRightEdgeSwipedInward = false
+                        wasRightEdgeCancelledBySystem = false
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (isRightEdgeTouchActive) {
+                        val dx = ev.rawX - lastRightEdgeDownX
+                        val dy = ev.rawY - lastRightEdgeDownY
+                        // 向左内滑超过 20dp 且水平位移为主
+                        if (dx < -20f * resources.displayMetrics.density && abs(dx) > abs(dy) * 0.8f) {
+                            hasRightEdgeSwipedInward = true
+                        }
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    // 若用户在应用内完成了一次完整的从右边缘向内水平滑动，且系统未拦截（如三键导航或手势未被系统层阻断）
+                    if (isRightEdgeTouchActive && hasRightEdgeSwipedInward) {
+                        val duration = SystemClock.uptimeMillis() - lastRightEdgeDownTime
+                        if (duration < 650L) {
+                            triggerTabletBack()
+                        }
+                    }
+                    isRightEdgeTouchActive = false
+                    hasRightEdgeSwipedInward = false
+                    wasRightEdgeCancelledBySystem = false
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    // 当系统手势导航（预测性返回动画或侧滑返回）接管时会收到 ACTION_CANCEL，此时保持状态供 handleOnBackPressed 使用
+                    if (isRightEdgeTouchActive) {
+                        wasRightEdgeCancelledBySystem = true
+                    }
+                }
+            }
+        }
+
         return super.dispatchTouchEvent(ev)
+    }
+
+    /**
+     * 触发手机右侧侧滑映射平板系统返回键：
+     * 1. 向平板下发全局系统 Back 指令；
+     * 2. 提供手机端触觉振动反馈；
+     * 3. 手机端原地保持，完全屏蔽退出/退到后台效果。
+     */
+    private fun triggerTabletBack() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastRightEdgeBackTriggerTime < 350L) {
+            return // 防抖：350ms 内忽略重复触发
+        }
+        lastRightEdgeBackTriggerTime = now
+
+        // 1. 手机端触感振动反馈（提供与系统侧滑一致的按键触感）
+        try {
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        } catch (_: Exception) {}
+
+        // 2. 发送系统返回键指令至平板（若已连接）
+        if (connectionManager.isConnectedOrConnecting()) {
+            connectionManager.sendSystemBack()
+            Log.d(TAG, "triggerTabletBack: sent Back to tablet, phone back suppressed")
+        } else {
+            Toast.makeText(this, "已触发平板返回 (当前未连接设备)", Toast.LENGTH_SHORT).show()
+            Log.d(TAG, "triggerTabletBack: not connected, phone back suppressed")
+        }
     }
 
     private fun applyThemeMode(themeMode: String, persist: Boolean = true) {
@@ -296,6 +429,11 @@ class MainActivity : AppCompatActivity() {
         // Anti-Screenshot protection setup (default: true)
         val antiScreenshot = prefs.getBoolean(KEY_ANTI_SCREENSHOT, true)
         binding.switchAntiScreenshot.isChecked = antiScreenshot
+
+        // Right-Edge Back gesture mapping setup (default: true)
+        isRightEdgeBackEnabled = prefs.getBoolean(KEY_RIGHT_EDGE_BACK, true)
+        binding.switchRightEdgeBack.isChecked = isRightEdgeBackEnabled
+        binding.wheelBarView.isSystemGestureExclusionEnabled = !isRightEdgeBackEnabled
 
         // Show version and build time
         binding.tvAboutVersion.text = "AirCursor v${BuildConfig.VERSION_NAME} (构建时间: ${BuildConfig.BUILD_TIME})"
@@ -544,6 +682,13 @@ class MainActivity : AppCompatActivity() {
                 if (isInputModeActive) dismissInput()
                 hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel, 0)
             }
+
+            override fun onSwipeBack() {
+                if (isInputModeActive) dismissInput()
+                if (isRightEdgeBackEnabled) {
+                    triggerTabletBack()
+                }
+            }
         }
 
         // Physical Left Button
@@ -643,6 +788,15 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean(KEY_ANTI_SCREENSHOT, isChecked).apply()
             applyAntiScreenshot(isChecked)
             val tip = if (isChecked) "已开启触控板防截屏保护" else "已关闭触控板防截屏保护"
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
+        }
+
+        // Right Edge Back mapping Switch
+        binding.switchRightEdgeBack.setOnCheckedChangeListener { _, isChecked ->
+            isRightEdgeBackEnabled = isChecked
+            prefs.edit().putBoolean(KEY_RIGHT_EDGE_BACK, isChecked).apply()
+            binding.wheelBarView.isSystemGestureExclusionEnabled = !isChecked
+            val tip = if (isChecked) "已开启手机右侧返回映射平板返回键" else "已恢复手机右侧默认返回行为"
             Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
         }
 

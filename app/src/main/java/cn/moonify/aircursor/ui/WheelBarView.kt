@@ -22,6 +22,7 @@ class WheelBarView @JvmOverloads constructor(
 
     interface Callback {
         fun onWheel(wheel: Int)
+        fun onSwipeBack() {}
     }
 
     var callback: Callback? = null
@@ -29,8 +30,18 @@ class WheelBarView @JvmOverloads constructor(
     // 滚轮滑动方向：默认 true 为两指滑动方向（自然滚动，手指下滑为正向 wheel，与 TouchpadView 一致）；false 为反向传统滚轮
     var isNaturalDirection: Boolean = true
 
+    // 是否将滚轮栏区域加入系统手势排除矩形（开启右侧侧滑映射平板返回时为 false，允许系统手势触发；关闭时为 true，屏蔽系统手势防滚轮误触）
+    var isSystemGestureExclusionEnabled: Boolean = false
+        set(value) {
+            field = value
+            updateSystemGestureExclusion()
+        }
+
+    private var downX = 0f
+    private var downY = 0f
     private var lastY = 0f
     private var wheelAccumulator = 0f
+    private var isHorizontalSwipe = false
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     init {
@@ -55,16 +66,20 @@ class WheelBarView @JvmOverloads constructor(
     }
 
     /**
-     * 在 Android 10+ 上将滚轮栏区域加入系统手势排除矩形，防止贴边滑动时触发系统侧滑返回手势
+     * 在 Android 10+ 上根据配置将滚轮栏区域加入系统手势排除矩形。
+     * 若开启了右侧侧滑返回映射，则不排除，确保手机系统能正常响应右边缘侧滑返回手势；
+     * 若关闭了映射，则将滚轮栏区域加入手势排除矩形，防止贴边滑动时触发系统侧滑返回。
      */
     private fun updateSystemGestureExclusion() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             post {
-                if (width > 0 && height > 0) {
-                    try {
-                        systemGestureExclusionRects = listOf(Rect(0, 0, width, height))
-                    } catch (_: Exception) {}
-                }
+                try {
+                    systemGestureExclusionRects = if (isSystemGestureExclusionEnabled && width > 0 && height > 0) {
+                        listOf(Rect(0, 0, width, height))
+                    } else {
+                        emptyList()
+                    }
+                } catch (_: Exception) {}
             }
         }
     }
@@ -94,13 +109,28 @@ class WheelBarView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
                 lastY = event.y
                 wheelAccumulator = 0f
+                isHorizontalSwipe = false
                 parent.requestDisallowInterceptTouchEvent(true)
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
+                val totalDx = Math.abs(event.x - downX)
+                val totalDy = Math.abs(event.y - downY)
+
+                // 若手指从右边缘向内（向左，即 event.x < downX）快速横滑，判定为内滑返回手势
+                // 抑制滚轮累加，防止向平板误发滚轮滚动
+                if (!isHorizontalSwipe && (downX - event.x) > 12f * resources.displayMetrics.density && (downX - event.x) > totalDy * 0.8f) {
+                    isHorizontalSwipe = true
+                }
+                if (isHorizontalSwipe) {
+                    return true
+                }
+
                 val dy = event.y - lastY
                 lastY = event.y
 
@@ -119,8 +149,19 @@ class WheelBarView @JvmOverloads constructor(
                 return true
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
+                if (isHorizontalSwipe) {
+                    callback?.onSwipeBack()
+                }
                 wheelAccumulator = 0f
+                isHorizontalSwipe = false
+                parent.requestDisallowInterceptTouchEvent(false)
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                wheelAccumulator = 0f
+                isHorizontalSwipe = false
                 parent.requestDisallowInterceptTouchEvent(false)
                 return true
             }

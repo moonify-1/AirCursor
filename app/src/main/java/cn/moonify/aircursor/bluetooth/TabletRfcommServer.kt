@@ -205,6 +205,17 @@ object TabletRfcommServer {
             return RfcommConstants.ACK_PASSTHROUGH
         }
 
+        if (text == RfcommConstants.CMD_BACK) {
+            val ime = RemoteImeService.activeInstance
+            if (ime != null) {
+                mainHandler.post {
+                    ime.sendDownUpKeyEvents(KeyEvent.KEYCODE_BACK)
+                }
+                return RfcommConstants.ACK_HANDLED
+            }
+            return RfcommConstants.ACK_PASSTHROUGH
+        }
+
         if (text == RfcommConstants.CMD_BACKSPACE) {
             val ime = RemoteImeService.activeInstance
             val ic = ime?.currentInputConnection

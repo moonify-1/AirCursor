@@ -19,6 +19,7 @@ object RfcommConstants {
     const val CMD_ENTER = "__CMD_ENTER__"
     const val CMD_SPACE = "__CMD_SPACE__"
     const val CMD_RECENTS = "__CMD_RECENTS__"
+    const val CMD_BACK = "__CMD_BACK__"
 
     // Tablet Response ACKs
     const val ACK_COMMITTED = "__ACK_COMMITTED__"

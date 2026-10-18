@@ -559,6 +559,30 @@ class HidMouseManager(private val context: Context) {
         }
     }
 
+    /**
+     * 发送系统 Back 返回键：
+     * 1. 复合模式 / 触控板模式下，通过 Consumer Control (Report ID 3) 发送 AC Back (0x20)，Android 平板原生识别为 KEYCODE_BACK；
+     * 2. 纯鼠标模式下，发送第 4 键 (BUTTON_BACK = 0x08) 触发返回。
+     */
+    @SuppressLint("MissingPermission")
+    fun sendBack() {
+        if (hidMode != MODE_PURE_MOUSE) {
+            sendConsumerKey(CONSUMER_BACK)
+        } else {
+            val hid = hidDevice ?: return
+            val device = connectedDevice ?: return
+            executor.execute {
+                try {
+                    sendMouseReport(BUTTON_BACK, 0, 0, 0, 0)
+                    Thread.sleep(30)
+                    sendMouseReport(BUTTON_NONE, 0, 0, 0, 0)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send mouse back report", e)
+                }
+            }
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
         val hid = hidDevice
