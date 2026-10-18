@@ -110,7 +110,10 @@ class BlackScreenTouchpadActivity : AppCompatActivity() {
     private fun setupTouchpad() {
         // 读取并应用用户此前在设置中的个性化偏好
         val savedTouchpadSens = prefs.getFloat(MainActivity.KEY_TOUCHPAD_SENS, 1.2f)
-        val savedTwoFingerSens = prefs.getFloat(MainActivity.KEY_TWO_FINGER_SENS, prefs.getFloat(MainActivity.KEY_WHEEL_SENS, 0.2f))
+        var savedTwoFingerSens = prefs.getFloat(MainActivity.KEY_TWO_FINGER_SENS, 1.2f)
+        if (savedTwoFingerSens < 0.3f) {
+            savedTwoFingerSens = 1.2f
+        }
         val savedTouchpadNatural = prefs.getBoolean(MainActivity.KEY_TOUCHPAD_SCROLL_DIRECTION, true)
         val isNative = (hidMouseManager.hidMode == HidMouseManager.MODE_TOUCHPAD)
 

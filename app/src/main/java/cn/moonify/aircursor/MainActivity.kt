@@ -248,7 +248,12 @@ class MainActivity : AppCompatActivity() {
         binding.sbTouchpadSens.progress = (savedTouchpadSens * 10).toInt().coerceIn(5, 30)
         binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", savedTouchpadSens)
 
-        val savedTwoFingerSens = prefs.getFloat(KEY_TWO_FINGER_SENS, prefs.getFloat(KEY_WHEEL_SENS, 0.2f))
+        var savedTwoFingerSens = prefs.getFloat(KEY_TWO_FINGER_SENS, 1.2f)
+        // 兼容迁移：旧版 0.1x 及以下灵敏度升级映射至全新基准 1.2f
+        if (savedTwoFingerSens < 0.3f) {
+            savedTwoFingerSens = 1.2f
+            prefs.edit().putFloat(KEY_TWO_FINGER_SENS, 1.2f).apply()
+        }
         binding.touchpadView.scrollSensitivity = savedTwoFingerSens
         binding.sbTwoFingerSens.progress = (savedTwoFingerSens * 10).toInt().coerceIn(1, 30)
         binding.tvTwoFingerSensLabel.text = String.format("双指拖动灵敏度: %.1fx", savedTwoFingerSens)

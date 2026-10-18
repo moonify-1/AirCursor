@@ -587,7 +587,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="双指拖动灵敏度: 0.2x"
+                    android:text="双指拖动灵敏度: 1.2x"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -597,7 +597,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:max="30"
-                    android:progress="2" />
+                    android:progress="12" />
 
                 <!-- Wheel Sensitivity -->
                 <TextView

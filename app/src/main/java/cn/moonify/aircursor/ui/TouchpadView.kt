@@ -55,9 +55,14 @@ class TouchpadView @JvmOverloads constructor(
         fun onFourFingerTap() {}
     }
 
+    companion object {
+        // 双指滑动步进缩放系数：基准 1.2x 灵敏度对应原 0.1x 物理步长 (0.1 / 1.2 = 1 / 12)
+        const val SCROLL_SENS_RATIO = 0.1f / 1.2f
+    }
+
     var callback: Callback? = null
     var sensitivity: Float = 1.2f
-    var scrollSensitivity: Float = 0.2f
+    var scrollSensitivity: Float = 1.2f
     var isNaturalScroll: Boolean = true
     var isNativeTouchpadMode: Boolean = false // 保留属性保持向后兼容
 
@@ -120,9 +125,10 @@ class TouchpadView @JvmOverloads constructor(
                 return
             }
 
-            // 将滑行速度按灵敏度换算为滚轮/平移步长
-            val rawWheelStep = kineticVelocityY * scrollSensitivity * 0.45f
-            val rawPanStep = kineticVelocityX * scrollSensitivity * 0.45f
+            // 将滑行速度按灵敏度换算为滚轮/平移步长 (以 1.2x 对应旧版 0.1x 物理步长等比缩放)
+            val effectiveSens = scrollSensitivity * SCROLL_SENS_RATIO
+            val rawWheelStep = kineticVelocityY * effectiveSens * 0.45f
+            val rawPanStep = kineticVelocityX * effectiveSens * 0.45f
 
             val stepY = if (isNaturalScroll) rawWheelStep else -rawWheelStep
             val stepX = if (isNaturalScroll) -rawPanStep else rawPanStep
@@ -470,8 +476,10 @@ class TouchpadView @JvmOverloads constructor(
                     recordVelocitySample(now, currentFocusX, currentFocusY)
 
                     // 步进换算：支持垂直滚轮与水平横向平移 (AC Pan)
-                    val rawWheelStep = dy * scrollSensitivity * 0.45f
-                    val rawPanStep = dx * scrollSensitivity * 0.45f
+                    // 基准 1.2x 对应旧版 0.1x 物理步长等比缩放
+                    val effectiveSens = scrollSensitivity * SCROLL_SENS_RATIO
+                    val rawWheelStep = dy * effectiveSens * 0.45f
+                    val rawPanStep = dx * effectiveSens * 0.45f
 
                     // 自然滑动方向：手指向上推 (dy < 0) 页面向下滚 (negative wheel)
                     // 传统滚轮方向：手指向上推 (dy < 0) 页面向上滚 (positive wheel)
