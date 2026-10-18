@@ -173,14 +173,14 @@ class HidMouseManager(private val context: Context) {
             0xA1.toByte(), 0x00.toByte(),
             0x05.toByte(), 0x09.toByte(),
             0x19.toByte(), 0x01.toByte(),
-            0x29.toByte(), 0x03.toByte(),
+            0x29.toByte(), 0x05.toByte(),
             0x15.toByte(), 0x00.toByte(),
             0x25.toByte(), 0x01.toByte(),
-            0x95.toByte(), 0x03.toByte(),
+            0x95.toByte(), 0x05.toByte(),
             0x75.toByte(), 0x01.toByte(),
             0x81.toByte(), 0x02.toByte(),
             0x95.toByte(), 0x01.toByte(),
-            0x75.toByte(), 0x05.toByte(),
+            0x75.toByte(), 0x03.toByte(),
             0x81.toByte(), 0x03.toByte(),
             0x05.toByte(), 0x01.toByte(),
             0x09.toByte(), 0x30.toByte(),
@@ -560,25 +560,37 @@ class HidMouseManager(private val context: Context) {
     }
 
     /**
-     * 发送系统 Back 返回键：
-     * 1. 复合模式 / 触控板模式下，通过 Consumer Control (Report ID 3) 发送 AC Back (0x20)，Android 平板原生识别为 KEYCODE_BACK；
-     * 2. 纯鼠标模式下，发送第 4 键 (BUTTON_BACK = 0x08) 触发返回。
+     * 发送系统 Back 返回键至平板：
+     * 发送标准 5 键鼠标的第 4 键 (BUTTON_BACK = 0x08)。
+     * 在 Android 系统底层 (CursorInputMapper)，鼠标第 4 键 (AMOTION_EVENT_BUTTON_BACK)
+     * 被直接转化为全局硬件返回事件 (KeyEvent.KEYCODE_BACK)，能 100% 穿透所有应用、浏览器及系统界面触发返回！
      */
     @SuppressLint("MissingPermission")
     fun sendBack() {
-        if (hidMode != MODE_PURE_MOUSE) {
-            sendConsumerKey(CONSUMER_BACK)
-        } else {
-            val hid = hidDevice ?: return
-            val device = connectedDevice ?: return
-            executor.execute {
-                try {
-                    sendMouseReport(BUTTON_BACK, 0, 0, 0, 0)
-                    Thread.sleep(30)
-                    sendMouseReport(BUTTON_NONE, 0, 0, 0, 0)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to send mouse back report", e)
+        val hid = hidDevice ?: return
+        val device = connectedDevice ?: return
+
+        executor.execute {
+            try {
+                // 1. 发送鼠标第 4 键按下 (BUTTON_BACK = 0x08)
+                var okDown = false
+                for (i in 0 until 4) {
+                    okDown = sendMouseReport(BUTTON_BACK, 0, 0, 0, 0)
+                    if (okDown) break
+                    Thread.sleep(8)
                 }
+
+                Thread.sleep(45)
+
+                // 2. 发送鼠标释放 (全 0)
+                for (i in 0 until 5) {
+                    val okUp = sendMouseReport(BUTTON_NONE, 0, 0, 0, 0)
+                    if (okUp) break
+                    Thread.sleep(8)
+                }
+                Log.d(TAG, "sendBack: sent mouse BUTTON_BACK report (okDown=$okDown)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send mouse back report", e)
             }
         }
     }
