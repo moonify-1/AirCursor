@@ -28,6 +28,7 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -37,7 +38,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import cn.moonify.aircursor.bluetooth.AirCursorConnectionManager
@@ -81,6 +85,15 @@ class MainActivity : AppCompatActivity() {
         const val SHORTCUT_RECENTS_OVERVIEW = "recents_overview"
         const val SHORTCUT_ALT_TAB = "alt_tab"
         const val SHORTCUT_WIN_TAB = "win_tab"
+
+        const val KEY_LANDSCAPE_KEYBOARD_MODE = "landscape_keyboard_mode"
+        const val KEY_LANDSCAPE_SHOW_SCROLLBAR = "landscape_show_scrollbar"
+        const val KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS = "landscape_show_mouse_buttons"
+        const val KEY_LANDSCAPE_SPLIT_SWAP = "landscape_split_swap"
+        const val KEY_LANDSCAPE_SPLIT_WIDTH_INDEX = "landscape_split_width_index"
+
+        const val KEYBOARD_MODE_FULLSCREEN_HW = "fullscreen_hw"
+        const val KEYBOARD_MODE_SPLIT_SYSTEM = "split_system"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -100,6 +113,11 @@ class MainActivity : AppCompatActivity() {
 
     private var isInputModeActive = false
     private var wasKeyboardVisible = false
+
+    private var isLandscapeMode = false
+    private var isLandscapeKeyboardActive = false
+    private var isSplitSwapped = false
+    private var splitWidthIndex = 0
 
     private var isRightEdgeBackEnabled = true
     private var isCurrentBackSwipeRightEdge = false
@@ -230,6 +248,18 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
 
+                // 若侧边抽屉菜单打开，优先关闭抽屉
+                if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                    binding.drawerLayout.closeDrawer(GravityCompat.START)
+                    return
+                }
+
+                // 若当前在横屏模式，优先退出横屏模式返回竖屏
+                if (isLandscapeMode) {
+                    exitLandscapeMode()
+                    return
+                }
+
                 // 若在设置页，且不是右侧边缘映射手势，则返回鼠标页
                 if (binding.layoutSettingsContainer.visibility == View.VISIBLE) {
                     switchTab(true)
@@ -249,6 +279,7 @@ class MainActivity : AppCompatActivity() {
 
         setupUI()
         setupListeners()
+        setupLandscape()
         checkAndRequestPermissions()
 
         // 异步预加载离线拼音字典，确保输入中文时零延迟
@@ -558,6 +589,8 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val sens = (progress.coerceAtLeast(5)) / 10f
                 binding.touchpadView.sensitivity = sens
+                binding.landTouchpadView.sensitivity = sens
+                binding.landSplitTouchpad.sensitivity = sens
                 binding.tvTouchpadSensLabel.text = String.format("触控板灵敏度: %.1fx", sens)
                 if (fromUser) {
                     prefs.edit().putFloat(KEY_TOUCHPAD_SENS, sens).apply()
@@ -571,6 +604,8 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val sens = (progress.coerceAtLeast(1)) / 10f
                 binding.touchpadView.scrollSensitivity = sens
+                binding.landTouchpadView.scrollSensitivity = sens
+                binding.landSplitTouchpad.scrollSensitivity = sens
                 binding.tvTwoFingerSensLabel.text = String.format("双指拖动灵敏度: %.1fx", sens)
                 if (fromUser) {
                     prefs.edit().putFloat(KEY_TWO_FINGER_SENS, sens).apply()
@@ -584,6 +619,7 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val sens = (progress.coerceAtLeast(1)) / 10f
                 binding.wheelBarView.sensitivity = sens
+                binding.landWheelBarView.sensitivity = sens
                 binding.tvWheelSensLabel.text = String.format("滚轮栏灵敏度: %.1fx", sens)
                 if (fromUser) {
                     prefs.edit().putFloat(KEY_WHEEL_SENS, sens).apply()
@@ -625,72 +661,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Touchpad movements, tap, scroll, and multi-finger gestures
-        binding.touchpadView.callback = object : cn.moonify.aircursor.ui.TouchpadView.Callback {
-            override fun onMove(dx: Int, dy: Int) {
-                if (isInputModeActive) dismissInput()
-                hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0, 0)
-            }
-
-            override fun onTap() {
-                if (isInputModeActive) dismissInput()
-                // 单指轻触：发送左键单击 (Down 后延时 Up)
-                val downState = currentButtonState or HidMouseManager.BUTTON_LEFT
-                hidMouseManager.sendMouseReport(downState, 0, 0, 0, 0)
-                mainHandler.postDelayed({
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
-                }, 20)
-            }
-
-            override fun onSecondaryTap() {
-                if (isInputModeActive) dismissInput()
-                // 双指轻触：发送右键单击
-                val downState = currentButtonState or HidMouseManager.BUTTON_RIGHT
-                hidMouseManager.sendMouseReport(downState, 0, 0, 0, 0)
-                mainHandler.postDelayed({
-                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
-                }, 20)
-            }
-
-            override fun onDragStart() {
-                if (isInputModeActive) dismissInput()
-                currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
-                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
-            }
-
-            override fun onDragMove(dx: Int, dy: Int) {
-                hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0, 0)
-            }
-
-            override fun onDragEnd() {
-                currentButtonState = currentButtonState and HidMouseManager.BUTTON_LEFT.inv()
-                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
-            }
-
-            override fun onScroll(wheel: Int, pan: Int) {
-                if (isInputModeActive) dismissInput()
-                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel, pan)
-            }
-
-            override fun onThreeFingerSwipeUp() {
-                if (isInputModeActive) dismissInput()
-                handleThreeFingerOverview("三指上滑")
-            }
-
-            override fun onThreeFingerSwipeDown() {
-                if (isInputModeActive) dismissInput()
-                hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_HOME)
-            }
-
-            override fun onThreeFingerHorizontalSwipe(direction: Int) {
-                if (isInputModeActive) dismissInput()
-                handleDirectAppSwitch(direction)
-            }
-
-            override fun onThreeFingerTap() {
-                if (isInputModeActive) dismissInput()
-                handleThreeFingerOverview("三指轻点")
-            }
-        }
+        binding.touchpadView.callback = createTouchpadCallback()
 
         // 48dp Scroll wheel
         binding.wheelBarView.callback = object : cn.moonify.aircursor.ui.WheelBarView.Callback {
@@ -784,6 +755,8 @@ class MainActivity : AppCompatActivity() {
         binding.rgTouchpadScrollDirection.setOnCheckedChangeListener { _, checkedId ->
             val natural = (checkedId == R.id.rbTouchpadScrollNatural)
             binding.touchpadView.isNaturalScroll = natural
+            binding.landTouchpadView.isNaturalScroll = natural
+            binding.landSplitTouchpad.isNaturalScroll = natural
             prefs.edit().putBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, natural).apply()
         }
 
@@ -791,6 +764,7 @@ class MainActivity : AppCompatActivity() {
         binding.rgWheelDirection.setOnCheckedChangeListener { _, checkedId ->
             val natural = (checkedId == R.id.rbWheelNatural)
             binding.wheelBarView.isNaturalDirection = natural
+            binding.landWheelBarView.isNaturalDirection = natural
             prefs.edit().putBoolean(KEY_WHEEL_DIRECTION, natural).apply()
         }
 
@@ -1209,6 +1183,28 @@ class MainActivity : AppCompatActivity() {
                 updateBadge(binding.tvBadgeCombo, "🖱 纯鼠标模式", R.color.badge_gray_text, R.color.badge_gray_bg)
             }
         }
+
+        // 4. Update Landscape Status Pill and Drawer Status
+        if (isAnyConnected) {
+            val devName = try { activeDevice?.name } catch (_: Exception) { null } ?: "平板设备"
+            binding.tvLandStatusText.text = "已连接"
+            binding.tvLandStatusText.setTextColor(ContextCompat.getColor(this, R.color.land_key_text))
+            binding.ivLandStatusBt.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent_green))
+            binding.tvDrawerDeviceName.text = "已连接: $devName"
+            binding.btnDrawerDisconnect.text = "断开蓝牙连接"
+        } else if (isAnyConnecting || isReconnecting) {
+            binding.tvLandStatusText.text = "连接中..."
+            binding.tvLandStatusText.setTextColor(ContextCompat.getColor(this, R.color.accent_amber))
+            binding.ivLandStatusBt.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent_amber))
+            binding.tvDrawerDeviceName.text = "正在连接平板..."
+            binding.btnDrawerDisconnect.text = "取消连接"
+        } else {
+            binding.tvLandStatusText.text = "未连接"
+            binding.tvLandStatusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.ivLandStatusBt.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.badge_gray_text))
+            binding.tvDrawerDeviceName.text = getString(R.string.prop_device_none)
+            binding.btnDrawerDisconnect.text = "连接平板设备"
+        }
     }
 
     private fun updateBadge(
@@ -1392,6 +1388,520 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    private fun createTouchpadCallback(): cn.moonify.aircursor.ui.TouchpadView.Callback {
+        return object : cn.moonify.aircursor.ui.TouchpadView.Callback {
+            override fun onMove(dx: Int, dy: Int) {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0, 0)
+            }
+
+            override fun onTap() {
+                if (isInputModeActive) dismissInput()
+                val downState = currentButtonState or HidMouseManager.BUTTON_LEFT
+                hidMouseManager.sendMouseReport(downState, 0, 0, 0, 0)
+                mainHandler.postDelayed({
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                }, 20)
+            }
+
+            override fun onSecondaryTap() {
+                if (isInputModeActive) dismissInput()
+                val downState = currentButtonState or HidMouseManager.BUTTON_RIGHT
+                hidMouseManager.sendMouseReport(downState, 0, 0, 0, 0)
+                mainHandler.postDelayed({
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                }, 20)
+            }
+
+            override fun onDragStart() {
+                if (isInputModeActive) dismissInput()
+                currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+            }
+
+            override fun onDragMove(dx: Int, dy: Int) {
+                hidMouseManager.sendMouseReport(currentButtonState, dx, dy, 0, 0)
+            }
+
+            override fun onDragEnd() {
+                currentButtonState = currentButtonState and HidMouseManager.BUTTON_LEFT.inv()
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+            }
+
+            override fun onScroll(wheel: Int, pan: Int) {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel, pan)
+            }
+
+            override fun onThreeFingerSwipeUp() {
+                if (isInputModeActive) dismissInput()
+                handleThreeFingerOverview("三指上滑")
+            }
+
+            override fun onThreeFingerSwipeDown() {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_HOME)
+            }
+
+            override fun onThreeFingerHorizontalSwipe(direction: Int) {
+                if (isInputModeActive) dismissInput()
+                handleDirectAppSwitch(direction)
+            }
+
+            override fun onThreeFingerTap() {
+                if (isInputModeActive) dismissInput()
+                handleThreeFingerOverview("三指轻点")
+            }
+
+            override fun onFourFingerTap() {
+                if (isInputModeActive) dismissInput()
+                hidMouseManager.sendConsumerKey(HidMouseManager.CONSUMER_HOME)
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val isLand = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+        applyOrientationMode(isLand)
+    }
+
+    private fun enterLandscapeMode() {
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        applyOrientationMode(true)
+    }
+
+    private fun exitLandscapeMode() {
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        mainHandler.postDelayed({
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }, 1000)
+        applyOrientationMode(false)
+    }
+
+    private fun applyOrientationMode(isLand: Boolean) {
+        isLandscapeMode = isLand
+        if (isLand) {
+            binding.layoutPortraitContainer.visibility = View.GONE
+            binding.layoutLandscapeContainer.visibility = View.VISIBLE
+
+            // 同步触控板灵敏度与设置
+            val savedTouchpadSens = prefs.getFloat(KEY_TOUCHPAD_SENS, 1.2f)
+            val savedTwoFingerSens = prefs.getFloat(KEY_TWO_FINGER_SENS, 1.2f)
+            val savedNatural = prefs.getBoolean(KEY_TOUCHPAD_SCROLL_DIRECTION, true)
+            binding.landTouchpadView.sensitivity = savedTouchpadSens
+            binding.landTouchpadView.scrollSensitivity = savedTwoFingerSens
+            binding.landTouchpadView.isNaturalScroll = savedNatural
+
+            binding.landSplitTouchpad.sensitivity = savedTouchpadSens
+            binding.landSplitTouchpad.scrollSensitivity = savedTwoFingerSens
+            binding.landSplitTouchpad.isNaturalScroll = savedNatural
+
+            val savedWheelSens = prefs.getFloat(KEY_WHEEL_SENS, 0.2f)
+            val savedWheelNatural = prefs.getBoolean(KEY_WHEEL_DIRECTION, true)
+            binding.landWheelBarView.isCapsuleStyle = true
+            binding.landWheelBarView.sensitivity = savedWheelSens
+            binding.landWheelBarView.isNaturalDirection = savedWheelNatural
+
+            switchLandscapeTab(isLandscapeKeyboardActive)
+            updateLandscapeVisibilitySettings()
+        } else {
+            binding.layoutLandscapeContainer.visibility = View.GONE
+            binding.layoutPortraitContainer.visibility = View.VISIBLE
+            dismissLandscapeInput()
+            if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                binding.drawerLayout.closeDrawer(GravityCompat.START)
+            }
+        }
+        updateStatusText()
+    }
+
+    private fun switchLandscapeTab(isKeyboard: Boolean) {
+        isLandscapeKeyboardActive = isKeyboard
+        if (!isKeyboard) {
+            // 鼠标触控模式激活
+            binding.btnLandTabMouse.setBackgroundResource(R.drawable.bg_land_active_tab)
+            binding.ivLandTabMouse.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_active_icon))
+
+            binding.btnLandTabKeyboard.setBackgroundColor(Color.TRANSPARENT)
+            binding.ivLandTabKeyboard.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_inactive_icon))
+
+            binding.landTouchpadView.visibility = View.VISIBLE
+            binding.landVirtualKeyboard.visibility = View.GONE
+            binding.layoutLandSplit.visibility = View.GONE
+            dismissLandscapeInput()
+            updateLandscapeVisibilitySettings()
+        } else {
+            // 键盘模式激活
+            binding.btnLandTabKeyboard.setBackgroundResource(R.drawable.bg_land_active_tab)
+            binding.ivLandTabKeyboard.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_active_icon))
+
+            binding.btnLandTabMouse.setBackgroundColor(Color.TRANSPARENT)
+            binding.ivLandTabMouse.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.land_inactive_icon))
+
+            // 键盘打字时隐藏底部按键与滚轮，避免重叠干扰
+            binding.layoutLandMouseButtons.visibility = View.GONE
+            binding.layoutLandWheelContainer.visibility = View.GONE
+
+            val kbMode = prefs.getString(KEY_LANDSCAPE_KEYBOARD_MODE, KEYBOARD_MODE_FULLSCREEN_HW) ?: KEYBOARD_MODE_FULLSCREEN_HW
+            if (kbMode == KEYBOARD_MODE_FULLSCREEN_HW) {
+                // 模式 1：全屏模拟实体键盘 (由平板输入法解析)
+                binding.landTouchpadView.visibility = View.GONE
+                binding.layoutLandSplit.visibility = View.GONE
+                binding.landVirtualKeyboard.visibility = View.VISIBLE
+                dismissLandscapeInput()
+            } else {
+                // 模式 2：半屏/分屏键盘 (触控板 + 手机系统输入法)
+                binding.landTouchpadView.visibility = View.GONE
+                binding.landVirtualKeyboard.visibility = View.GONE
+                binding.layoutLandSplit.visibility = View.VISIBLE
+                applySplitSwap()
+                applySplitWidth()
+                showLandscapeSoftKeyboard()
+            }
+        }
+    }
+
+    private fun updateLandscapeVisibilitySettings() {
+        val showScrollbar = prefs.getBoolean(KEY_LANDSCAPE_SHOW_SCROLLBAR, false)
+        val showButtons = prefs.getBoolean(KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS, false)
+
+        if (!isLandscapeKeyboardActive) {
+            binding.layoutLandWheelContainer.visibility = if (showScrollbar) View.VISIBLE else View.GONE
+            binding.layoutLandMouseButtons.visibility = if (showButtons) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun showLandscapeSoftKeyboard() {
+        binding.etSplitInput.requestFocus()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(binding.etSplitInput, InputMethodManager.SHOW_IMPLICIT)
+        connectionManager.ensureRfcommConnected()
+    }
+
+    private fun dismissLandscapeInput() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(binding.etSplitInput.windowToken, 0)
+        binding.etSplitInput.clearFocus()
+    }
+
+    private fun setupLandscape() {
+        // 1. 触控板回调配置 (全屏主触控板与分屏触控板)
+        binding.landTouchpadView.callback = createTouchpadCallback()
+        binding.landSplitTouchpad.callback = createTouchpadCallback()
+
+        // 2. 垂直胶囊滚轮配置
+        binding.landWheelBarView.isCapsuleStyle = true
+        binding.landWheelBarView.callback = object : cn.moonify.aircursor.ui.WheelBarView.Callback {
+            override fun onWheel(wheel: Int) {
+                hidMouseManager.sendMouseReport(currentButtonState, 0, 0, wheel, 0)
+            }
+        }
+
+        // 3. 全屏仿真实体键盘：直发 HID 键码发送
+        binding.landVirtualKeyboard.onKeySendListener = { keycode, modifier ->
+            hidMouseManager.sendKeyboardKey(keycode, modifier)
+        }
+
+        // 4. 顶部操作栏
+        // 汉堡菜单：呼出侧边抽屉
+        binding.btnLandMenu.setOnClickListener {
+            binding.drawerLayout.openDrawer(GravityCompat.START)
+        }
+
+        // 连接状态胶囊：点击可断开或连接
+        binding.btnLandStatus.setOnClickListener {
+            if (connectionManager.isConnectedOrConnecting()) {
+                val activeDevice = connectionManager.getActiveDevice()
+                val name = try { activeDevice?.name } catch (_: Exception) { null } ?: "平板设备"
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.disconnect_dialog_title)
+                    .setMessage("确定要断开与当前【$name】的蓝牙连接吗？")
+                    .setPositiveButton(R.string.disconnect_dialog_confirm) { _, _ ->
+                        disconnectAll()
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } else {
+                if (pairedDevices.isNotEmpty()) {
+                    connectToSelectedDevice()
+                } else {
+                    binding.drawerLayout.openDrawer(GravityCompat.START)
+                }
+            }
+        }
+
+        // 鼠标 / 键盘模式切换分段器
+        binding.btnLandTabMouse.setOnClickListener {
+            switchLandscapeTab(false)
+        }
+        binding.btnLandTabKeyboard.setOnClickListener {
+            switchLandscapeTab(true)
+        }
+
+        // 退出横屏按钮
+        binding.btnLandExit.setOnClickListener {
+            exitLandscapeMode()
+        }
+
+        // 5. 底部实体鼠标左右键交互 (真实 Touch Down / Up 事件)
+        binding.btnLandLeftClick.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    currentButtonState = currentButtonState or HidMouseManager.BUTTON_LEFT
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    currentButtonState = currentButtonState and HidMouseManager.BUTTON_LEFT.inv()
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        binding.btnLandRightClick.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    currentButtonState = currentButtonState or HidMouseManager.BUTTON_RIGHT
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    currentButtonState = currentButtonState and HidMouseManager.BUTTON_RIGHT.inv()
+                    hidMouseManager.sendMouseReport(currentButtonState, 0, 0, 0, 0)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 6. 分屏键盘控件配置
+        setupSplitControls()
+
+        // 7. 设置项双向同步与抽屉配置
+        setupPortraitLandscapeSettings()
+
+        // 8. 初始化当前屏幕方向
+        val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        applyOrientationMode(isLand)
+    }
+
+    private fun setupSplitControls() {
+        isSplitSwapped = prefs.getBoolean(KEY_LANDSCAPE_SPLIT_SWAP, false)
+        splitWidthIndex = prefs.getInt(KEY_LANDSCAPE_SPLIT_WIDTH_INDEX, 0)
+
+        // 左右互换按钮
+        binding.btnSplitSwap.setOnClickListener {
+            isSplitSwapped = !isSplitSwapped
+            prefs.edit().putBoolean(KEY_LANDSCAPE_SPLIT_SWAP, isSplitSwapped).apply()
+            applySplitSwap()
+            val tip = if (isSplitSwapped) "已将键盘切换至左侧" else "已将键盘切换至右侧"
+            Toast.makeText(this, tip, Toast.LENGTH_SHORT).show()
+        }
+
+        // 宽度调节按钮
+        binding.btnSplitWidth.setOnClickListener {
+            splitWidthIndex = (splitWidthIndex + 1) % 3
+            prefs.edit().putInt(KEY_LANDSCAPE_SPLIT_WIDTH_INDEX, splitWidthIndex).apply()
+            applySplitWidth()
+            val ratioStr = when (splitWidthIndex) {
+                1 -> "触控板 35% : 键盘 65%"
+                2 -> "触控板 65% : 键盘 35%"
+                else -> "触控板 50% : 键盘 50%"
+            }
+            Toast.makeText(this, "分屏比例: $ratioStr", Toast.LENGTH_SHORT).show()
+        }
+
+        // 分屏手机输入框监听
+        binding.etSplitInput.keyEventListener = object : cn.moonify.aircursor.ui.RemoteEditText.KeyEventListener {
+            override fun onTextCommitted(text: String) {
+                sendTextToTablet(text)
+            }
+
+            override fun onEmptyBackspace() {
+                binding.etSplitInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_BACKSPACE)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_BACKSPACE)
+                }
+            }
+
+            override fun onEnterPressed() {
+                binding.etSplitInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                }
+                binding.etSplitInput.text?.clear()
+            }
+
+            override fun onInputCancelled() {
+                dismissLandscapeInput()
+            }
+        }
+
+        binding.etSplitInput.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_DONE ||
+                actionId == EditorInfo.IME_ACTION_SEND ||
+                actionId == EditorInfo.IME_ACTION_GO ||
+                actionId == EditorInfo.IME_ACTION_SEARCH ||
+                actionId == EditorInfo.IME_ACTION_NEXT ||
+                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
+                binding.etSplitInput.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (hidMouseManager.connectionState == BluetoothProfile.STATE_CONNECTED) {
+                    hidMouseManager.sendKeyboardKey(HidMouseManager.KEY_ENTER)
+                } else {
+                    rfcommClientManager.sendCommand(RfcommConstants.CMD_ENTER)
+                }
+                binding.etSplitInput.text?.clear()
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    private fun applySplitSwap() {
+        val leftPane = binding.layoutSplitPaneLeft
+        val rightPane = binding.layoutSplitPaneRight
+
+        leftPane.removeAllViews()
+        rightPane.removeAllViews()
+
+        if (!isSplitSwapped) {
+            // 左边触控板，右边输入法
+            leftPane.addView(binding.landSplitTouchpad)
+            rightPane.addView(binding.layoutSplitInputContainer)
+        } else {
+            // 左边输入法，右边触控板
+            leftPane.addView(binding.layoutSplitInputContainer)
+            rightPane.addView(binding.landSplitTouchpad)
+        }
+    }
+
+    private fun applySplitWidth() {
+        val (weightLeft, weightRight) = when (splitWidthIndex) {
+            1 -> Pair(0.7f, 1.3f)
+            2 -> Pair(1.3f, 0.7f)
+            else -> Pair(1.0f, 1.0f)
+        }
+        val leftLp = binding.layoutSplitPaneLeft.layoutParams as LinearLayout.LayoutParams
+        leftLp.weight = if (!isSplitSwapped) weightLeft else weightRight
+        binding.layoutSplitPaneLeft.layoutParams = leftLp
+
+        val rightLp = binding.layoutSplitPaneRight.layoutParams as LinearLayout.LayoutParams
+        rightLp.weight = if (!isSplitSwapped) weightRight else weightLeft
+        binding.layoutSplitPaneRight.layoutParams = rightLp
+    }
+
+    private fun setupPortraitLandscapeSettings() {
+        // 顶部连接卡片“📐 横屏模式”按钮
+        binding.btnEnterLandscape.setOnClickListener {
+            enterLandscapeMode()
+        }
+
+        // 设置页“📐 横屏触控”按钮
+        binding.btnSettingsEnterLandscape.setOnClickListener {
+            enterLandscapeMode()
+        }
+
+        // 键盘模式单选同步
+        val savedKbMode = prefs.getString(KEY_LANDSCAPE_KEYBOARD_MODE, KEYBOARD_MODE_FULLSCREEN_HW) ?: KEYBOARD_MODE_FULLSCREEN_HW
+        if (savedKbMode == KEYBOARD_MODE_SPLIT_SYSTEM) {
+            binding.rbSettingsKbSplit.isChecked = true
+            binding.rbDrawerKbSplit.isChecked = true
+        } else {
+            binding.rbSettingsKbFullscreen.isChecked = true
+            binding.rbDrawerKbFullscreen.isChecked = true
+        }
+
+        val onKbModeChanged: (String) -> Unit = { mode ->
+            prefs.edit().putString(KEY_LANDSCAPE_KEYBOARD_MODE, mode).apply()
+            if (mode == KEYBOARD_MODE_SPLIT_SYSTEM) {
+                binding.rbSettingsKbSplit.isChecked = true
+                binding.rbDrawerKbSplit.isChecked = true
+            } else {
+                binding.rbSettingsKbFullscreen.isChecked = true
+                binding.rbDrawerKbFullscreen.isChecked = true
+            }
+            if (isLandscapeKeyboardActive) {
+                switchLandscapeTab(true)
+            }
+        }
+
+        binding.rgSettingsLandscapeKeyboardMode.setOnCheckedChangeListener { _, checkedId ->
+            val mode = if (checkedId == R.id.rbSettingsKbSplit) KEYBOARD_MODE_SPLIT_SYSTEM else KEYBOARD_MODE_FULLSCREEN_HW
+            onKbModeChanged(mode)
+        }
+        binding.rgDrawerKeyboardMode.setOnCheckedChangeListener { _, checkedId ->
+            val mode = if (checkedId == R.id.rbDrawerKbSplit) KEYBOARD_MODE_SPLIT_SYSTEM else KEYBOARD_MODE_FULLSCREEN_HW
+            onKbModeChanged(mode)
+        }
+
+        // 滚轮开关同步 (默认关闭)
+        val savedScrollbar = prefs.getBoolean(KEY_LANDSCAPE_SHOW_SCROLLBAR, false)
+        binding.switchSettingsLandscapeScrollbar.isChecked = savedScrollbar
+        binding.switchDrawerScrollbar.isChecked = savedScrollbar
+
+        val onScrollbarChanged: (Boolean) -> Unit = { checked ->
+            prefs.edit().putBoolean(KEY_LANDSCAPE_SHOW_SCROLLBAR, checked).apply()
+            binding.switchSettingsLandscapeScrollbar.isChecked = checked
+            binding.switchDrawerScrollbar.isChecked = checked
+            updateLandscapeVisibilitySettings()
+        }
+        binding.switchSettingsLandscapeScrollbar.setOnCheckedChangeListener { _, isChecked ->
+            onScrollbarChanged(isChecked)
+        }
+        binding.switchDrawerScrollbar.setOnCheckedChangeListener { _, isChecked ->
+            onScrollbarChanged(isChecked)
+        }
+
+        // 鼠标左右键开关同步 (默认关闭)
+        val savedMouseButtons = prefs.getBoolean(KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS, false)
+        binding.switchSettingsLandscapeButtons.isChecked = savedMouseButtons
+        binding.switchDrawerMouseButtons.isChecked = savedMouseButtons
+
+        val onMouseButtonsChanged: (Boolean) -> Unit = { checked ->
+            prefs.edit().putBoolean(KEY_LANDSCAPE_SHOW_MOUSE_BUTTONS, checked).apply()
+            binding.switchSettingsLandscapeButtons.isChecked = checked
+            binding.switchDrawerMouseButtons.isChecked = checked
+            updateLandscapeVisibilitySettings()
+        }
+        binding.switchSettingsLandscapeButtons.setOnCheckedChangeListener { _, isChecked ->
+            onMouseButtonsChanged(isChecked)
+        }
+        binding.switchDrawerMouseButtons.setOnCheckedChangeListener { _, isChecked ->
+            onMouseButtonsChanged(isChecked)
+        }
+
+        // 抽屉内快捷操作按钮
+        binding.btnDrawerDisconnect.setOnClickListener {
+            if (connectionManager.isConnectedOrConnecting()) {
+                disconnectAll()
+            } else {
+                if (pairedDevices.isNotEmpty()) connectToSelectedDevice()
+            }
+        }
+        binding.btnDrawerBlackScreen.setOnClickListener {
+            binding.drawerLayout.closeDrawer(GravityCompat.START)
+            launchBlackScreenMode()
+        }
+        binding.btnDrawerExitLandscape.setOnClickListener {
+            binding.drawerLayout.closeDrawer(GravityCompat.START)
+            exitLandscapeMode()
+        }
     }
 
     override fun onDestroy() {

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- Outer Mouse Body Outline -->
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M13,2v8h6c0,-4.42 -3.58,-8 -8,-8v0C11,2 11,2 13,2z M5,10h6V2C6.58,2 3,5.58 3,10h2zm0,2c0,4.42 3.58,8 8,8s8,-3.58 8,-8H5z"/>
+</vector>
